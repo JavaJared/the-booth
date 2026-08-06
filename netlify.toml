@@ -1,6 +1,5 @@
 # Netlify builds this for you — you never need npm on your own machine.
 [build]
-  command = "node tools/sync.js"   # mirrors shared/ into public/shared before publishing
   publish = "public"
   functions = "netlify/functions"
 
