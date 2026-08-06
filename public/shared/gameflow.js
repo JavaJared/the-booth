@@ -5,6 +5,7 @@ import {
   cpuDefensiveCall, cpuOffensiveCall, cpuFourthDown, recordTendency,
 } from './engine.js';
 import { OFF_BY_ID, DEF_BY_ID } from './playbook.js';
+import { makeRosters } from './roster.js';
 
 export const PLAY_CLOCK_MS = 45000;
 export const FILM_COST = 3;
@@ -57,6 +58,7 @@ export function runToNextDecision(gameId, game, humanCall) {
   let pendingSpecial = humanCall.special || null;
   let humanTurn = true;
   let guard = 0;
+  const rosters = makeRosters(game.rosterSeed || gameId);
 
   while (guard++ < 8) {
     const i = state.playIndex;
@@ -85,7 +87,11 @@ export function runToNextDecision(gameId, game, humanCall) {
       recordTendency(tendencies[side], state, off.family);
 
       const plan = humanHasBall ? game.gameplan.OC : null;
-      const outcome = resolveSnap(state, offId, defId, rng, tendencies[side], { offense: plan });
+      const outcome = resolveSnap(state, offId, defId, rng, tendencies[side], {
+        offense: plan,
+        offRoster: humanHasBall ? rosters.US.offense : rosters.CPU.offense,
+        defRoster: humanHasBall ? rosters.CPU.defense : rosters.US.defense,
+      });
       const { state: next, events } = advance(state, outcome, {
         tempo: humanHasBall ? game.gameplan.OC?.tempo : 'normal',
       });
