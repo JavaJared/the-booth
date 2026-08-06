@@ -142,3 +142,70 @@ export function unitSummary(plays) {
     defense: { ...summarise(def), third: third(def) },
   };
 }
+
+/* ---------------------------------------------------------------- box score
+   Built from the cast recorded on each play, so it is a record of what the
+   engine actually did, not a re-simulation. */
+
+function ensure(map, p) {
+  if (!p) return null;
+  const k = p.spot + '|' + p.name;
+  // Rushing and receiving keep separate longs and touchdowns — a back's
+  // 40-yard catch is not a 40-yard run.
+  map[k] = map[k] || { ...p, key: k,
+    att: 0, comp: 0, passYds: 0, passTD: 0, int: 0, sacked: 0,
+    car: 0, rushYds: 0, rushTD: 0, rushLong: 0,
+    tgt: 0, rec: 0, recYds: 0, recTD: 0, recLong: 0,
+    tkl: 0, sacks: 0, pbu: 0, ints: 0, ydsAllowed: 0 };
+  return map[k];
+}
+
+export function boxScore(plays, side) {
+  const off = {}, def = {};
+  const list = side === 'US' ? ourOffense(plays) : theirOffense(plays);
+  const stops = side === 'US' ? theirOffense(plays) : ourOffense(plays);
+
+  for (const p of list) {
+    const c = p.outcome.cast;
+    if (!c) continue;
+    const y = p.outcome.yards || 0;
+    const scored = (p.events || []).some((e) => e.type === 'score' && /Touchdown/.test(e.text));
+    if (c.carrier) {
+      const r = ensure(off, c.carrier);
+      r.car++; r.rushYds += y; r.rushLong = Math.max(r.rushLong, y);
+      if (scored) r.rushTD++;
+    } else if (c.passer) {
+      const q = ensure(off, c.passer);
+      if (p.outcome.sack) { q.sacked++; q.passYds += y; }
+      else {
+        q.att++;
+        if (p.outcome.turnover === 'interception') q.int++;
+        if (p.outcome.complete) { q.comp++; q.passYds += y; if (scored) q.passTD++; }
+      }
+      if (c.target) {
+        const t = ensure(off, c.target);
+        t.tgt++;
+        if (p.outcome.complete) {
+          t.rec++; t.recYds += y; t.recLong = Math.max(t.recLong, y);
+          if (scored) t.recTD++;
+        }
+      }
+    }
+  }
+
+  // Defensive credit comes from the plays this side defended.
+  for (const p of stops) {
+    const c = p.outcome.cast;
+    if (!c) continue;
+    const y = p.outcome.yards || 0;
+    if (c.sacker) { const r = ensure(def, c.sacker); r.sacks++; r.tkl++; }
+    if (c.interceptor) { const r = ensure(def, c.interceptor); r.ints++; }
+    if (c.breakup) { const r = ensure(def, c.breakup); r.pbu++; }
+    if (c.tackler) { const r = ensure(def, c.tackler); r.tkl++; r.ydsAllowed += Math.max(0, y); }
+  }
+
+  const order = { QB: 0, RB: 1, WR: 2, TE: 3, OL: 4, EDGE: 0, DT: 1, LB: 2, CB: 3, NB: 4, S: 5 };
+  const sortRows = (m) => Object.values(m).sort((a, b) =>
+    (order[a.pos] ?? 9) - (order[b.pos] ?? 9) || a.spot.localeCompare(b.spot));
+  return { offense: sortRows(off), defense: sortRows(def) };
+}
