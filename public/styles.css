@@ -265,3 +265,44 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
   .trace{stroke-dashoffset:0}
   .tracehead{opacity:1}
 }
+
+/* ---------- tabs + scouting: a printed stat sheet ---------- */
+.tabs{display:flex;gap:.3rem}
+.tab{background:none;border:1px solid transparent;border-bottom:0;border-radius:2px 2px 0 0;
+  padding:.2rem .6rem;cursor:pointer;color:var(--ink-3);
+  font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;
+  font-size:.68rem;font-weight:600}
+.tab:hover{color:var(--ink)}
+.tab.is-on{color:var(--ink);border-color:var(--ink);background:var(--pad);
+  position:relative;top:1px}
+.tab:focus-visible{outline:2px solid var(--pencil);outline-offset:1px}
+
+.scout-block{background:var(--pad);border:1px solid var(--ink);border-radius:2px;
+  margin-bottom:.85rem;overflow:hidden}
+.scout-block h3{margin:0;font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.12em;font-size:.63rem;font-weight:600;color:var(--paper);
+  background:var(--ink);padding:.28rem .5rem}
+.scout-note{margin:0;padding:.5rem .6rem;font-size:.8rem;color:var(--ink-3);
+  font-family:var(--hand);font-size:1.05rem}
+.scout-note.warn{color:var(--pencil)}
+table.scout{width:100%;border-collapse:collapse;font-size:.76rem;
+  font-variant-numeric:tabular-nums}
+table.scout th{font-family:var(--cond);text-transform:uppercase;letter-spacing:.09em;
+  font-size:.6rem;font-weight:600;color:var(--ink-3);text-align:left;
+  padding:.3rem .6rem;border-bottom:1px solid var(--ink)}
+table.scout td{padding:.28rem .6rem;border-bottom:1px solid var(--hair);color:var(--ink-2)}
+table.scout tr:last-child td{border-bottom:0}
+table.scout tr:nth-child(even) td{background:rgba(217,227,230,.22)}
+table.scout td:first-child{color:var(--ink);font-weight:500;text-transform:capitalize}
+table.scout .n{text-align:right;font-family:var(--mono);width:4.6rem}
+table.scout th.n{font-family:var(--cond)}
+
+/* a call's own record, set small and right-aligned on the sheet */
+.call u{position:absolute;right:.5rem;top:.42rem;text-decoration:none;
+  font-family:var(--mono);font-size:.65rem;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+.call b{padding-right:3.6rem}
+
+.legend{margin:0;font-size:.72rem;color:var(--ink-3);line-height:1.5;
+  border-top:1px solid var(--hair);padding-top:.6rem}
+.legend b{color:var(--ink-2);font-weight:600}
