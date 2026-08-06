@@ -107,9 +107,18 @@
     </div>
 
     <div class="col-feed">
-      <header class="col-head"><h2>Booth feed</h2></header>
-      <div class="lastplay" id="lastplay" hidden></div>
-      <ol class="feed" id="feed"></ol>
+      <header class="col-head">
+        <h2>Booth</h2>
+        <div class="tabs" role="tablist">
+          <button class="tab is-on" data-tab="feed" role="tab" aria-selected="true">Feed</button>
+          <button class="tab" data-tab="scout" role="tab" aria-selected="false">Scouting</button>
+        </div>
+      </header>
+      <div id="pane-feed">
+        <div class="lastplay" id="lastplay" hidden></div>
+        <ol class="feed" id="feed"></ol>
+      </div>
+      <div id="pane-scout" hidden></div>
       <div class="chirps" id="chirps"></div>
       <div class="chirp-bar" id="chirp-bar"></div>
     </div>
