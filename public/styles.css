@@ -317,3 +317,12 @@ table.scout th.n{font-family:var(--cond)}
 .verdict.good{color:#2F7D4F}
 .verdict.bad{color:var(--pencil)}
 .feed li .dd{color:var(--ink-3);flex:none;width:6.2rem}
+
+/* player tables: rating set small beside the name, gap called out in pencil */
+table.scout em{font-style:normal;font-family:var(--mono);font-size:.66rem;
+  color:var(--ink-3);margin-left:.3rem}
+table.scout td:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:11rem;text-transform:none}
+.gap{font-family:var(--mono);font-weight:600}
+.gap.good{color:#2F7D4F}
+.gap.bad{color:var(--pencil)}
