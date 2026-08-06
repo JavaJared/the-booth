@@ -217,7 +217,7 @@ function render(g, plays) {
   const isMyCall = mine === onClock && g.status === 'live';
 
   renderStrip(g, s);
-  renderField(g, s);
+  renderField(g, s, plays || []);
   renderFeed(g, plays || []);
   renderChirps(g);
 
@@ -269,11 +269,81 @@ function renderStrip(g, s) {
     : s.ballOn < 50 ? `${abbr(side)} ${s.ballOn}` : `${abbr(s.possession === 'US' ? g.oppName : g.teamName)} ${100 - s.ballOn}`;
 }
 
-function renderField(g, s) {
-  const absolute = s.possession === 'US' ? s.ballOn : 100 - s.ballOn;
-  const gain = s.possession === 'US' ? s.distance : -s.distance;
-  $('ball').style.left = `${absolute}%`;
-  $('marker').style.left = `${Math.max(0, Math.min(100, absolute + gain))}%`;
+/* The field is drawn on the same pad as the call sheet: green wash, printed
+   yard lines, and the coach's red pencil tracing where the ball just went.
+   US always attacks right, so field position reads the same way all game. */
+const EZ = 9, FW = 100, VW = 118, VH = 28;
+const xAt = (abs) => EZ + (abs / 100) * FW;
+
+function renderField(g, s, plays) {
+  const box = $('field');
+  const losAbs = s.possession === 'US' ? s.ballOn : 100 - s.ballOn;
+  const dir = s.possession === 'US' ? 1 : -1;
+  const goalToGo = s.distance >= 100 - s.ballOn;
+  const fdAbs = goalToGo ? (s.possession === 'US' ? 100 : 0) : losAbs + dir * s.distance;
+
+  const parts = [];
+  parts.push(`<svg viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" class="fieldsvg">`);
+
+  // turf and end zones
+  parts.push(`<rect x="0" y="0" width="${VW}" height="${VH}" rx="0.6" class="turf"/>`);
+  parts.push(`<rect x="0" y="0" width="${EZ}" height="${VH}" class="ez"/>`);
+  parts.push(`<rect x="${VW - EZ}" y="0" width="${EZ}" height="${VH}" class="ez"/>`);
+  parts.push(`<text x="${EZ / 2}" y="${VH / 2}" class="ez-label" transform="rotate(-90 ${EZ / 2} ${VH / 2})">${abbr(g.teamName)}</text>`);
+  parts.push(`<text x="${VW - EZ / 2}" y="${VH / 2}" class="ez-label" transform="rotate(90 ${VW - EZ / 2} ${VH / 2})">${abbr(g.oppName)}</text>`);
+
+  // yard lines every five, numbers every ten
+  for (let y = 0; y <= 100; y += 5) {
+    const x = xAt(y);
+    parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${VH}" class="yl${y % 10 ? ' minor' : ''}${y === 50 ? ' fifty' : ''}"/>`);
+    if (y % 10 === 0 && y > 0 && y < 100) {
+      const n = y <= 50 ? y : 100 - y;
+      parts.push(`<text x="${x}" y="${VH - 2.2}" class="yn">${n}</text>`);
+      parts.push(`<text x="${x}" y="5.2" class="yn">${n}</text>`);
+    }
+  }
+  // hash marks
+  for (let y = 1; y < 100; y++) {
+    const x = xAt(y);
+    parts.push(`<line x1="${x}" y1="9.4" x2="${x}" y2="10.8" class="hash"/>`);
+    parts.push(`<line x1="${x}" y1="${VH - 10.8}" x2="${x}" y2="${VH - 9.4}" class="hash"/>`);
+  }
+
+  // last play, traced in pencil
+  const last = [...(plays || [])].reverse().find((p) => p.outcome);
+  if (last) {
+    const pd = last.possession === 'US' ? 1 : -1;
+    const from = last.possession === 'US' ? last.ballOn : 100 - last.ballOn;
+    const o = last.outcome;
+    let to = from, kick = false;
+    if (o.special === 'punt') { to = losAbs; kick = true; }        // ends where the ball ends, touchback and all
+    else if (o.special === 'fg') { to = pd > 0 ? 100 : 0; kick = true; }
+    else if (!o.special) to = from + pd * (o.yards || 0);
+    to = Math.max(0, Math.min(100, to));
+    if (Math.abs(to - from) > 0.4) {
+      const x1 = xAt(from), x2 = xAt(to), mid = (x1 + x2) / 2;
+      const lift = kick ? 7.5 : Math.min(5, 1.4 + Math.abs(x2 - x1) * 0.11);
+      const miss = o.special === 'fg' && !o.made ? ' miss' : '';
+      parts.push(`<path d="M ${x1} ${VH / 2} Q ${mid} ${VH / 2 - lift} ${x2} ${VH / 2}" class="trace${kick ? ' kick' : ''}${miss}"/>`);
+      if (!kick) {
+        const head = x2 > x1 ? 1 : -1;
+        parts.push(`<path d="M ${x2} ${VH / 2} l ${-2.2 * head} -1.5 l 0.5 1.5 l -0.5 1.5 z" class="tracehead"/>`);
+      }
+    }
+  }
+
+  // line of scrimmage and the line to gain — broadcast colours, so they read instantly
+  parts.push(`<line x1="${xAt(fdAbs)}" y1="0.5" x2="${xAt(fdAbs)}" y2="${VH - 0.5}" class="fd"/>`);
+  parts.push(`<line x1="${xAt(losAbs)}" y1="0.5" x2="${xAt(losAbs)}" y2="${VH - 0.5}" class="los"/>`);
+  parts.push(`<ellipse cx="${xAt(losAbs)}" cy="${VH / 2}" rx="1.5" ry="1" class="pill"/>`);
+  parts.push('</svg>');
+  box.innerHTML = parts.join('');
+
+  const side = s.possession === 'US' ? g.teamName : g.oppName;
+  const spot = s.ballOn === 50 ? 'midfield'
+    : s.ballOn < 50 ? `${side} ${s.ballOn}` : `${s.possession === 'US' ? g.oppName : g.teamName} ${100 - s.ballOn}`;
+  $('field-note').textContent = `${s.possession === 'US' ? g.teamName : g.oppName} ball on the ${spot} — `
+    + (goalToGo ? 'goal to go' : `${s.distance} to gain`);
 }
 
 function renderCallSheet(g, s, mine) {
