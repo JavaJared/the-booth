@@ -1,6 +1,7 @@
 import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
-import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess } from './shared/scout.js';
+import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
+import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
@@ -23,6 +24,7 @@ class LocalTransport {
     this.gameId = 'local-' + Math.random().toString(36).slice(2, 8);
     this.game = {
       id: this.gameId, status: 'live', teamName, oppName,
+      rosterSeed: Math.random().toString(36).slice(2, 12),
       seats: { OC: { displayName: 'Offense', ready: true }, DC: { displayName: 'Defense', ready: true } },
       state: newGameState({ firstPossession: Math.random() < 0.5 ? 'US' : 'CPU' }),
       tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
@@ -224,6 +226,7 @@ function render(g, plays) {
   renderField(g, s, log);
   renderFeed(g, log);
   renderScouting(g, s, mine, log);
+  renderPlayers(g, mine, log);
   renderChirps(g);
 
   const seatBtn = $('btn-seat');
@@ -620,6 +623,66 @@ function table(head, rows) {
       `<td${i ? ' class="n"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
+/* ---------- players ----------
+   The box score is a record of what happened. Over one game it is mostly
+   variance, so the matchup board sits above it: that is the stable signal,
+   and it is computed from the same numbers the resolver uses. */
+
+function renderPlayers(g, mine, plays) {
+  const pane = $('pane-players');
+  if (pane.hidden) return;
+  pane.innerHTML = '';
+  const R = makeRosters(g.rosterSeed || g.id);
+
+  const attacking = mine === 'OC';
+  const off = attacking ? R.US.offense : R.CPU.offense;
+  const def = attacking ? R.CPU.defense : R.US.defense;
+
+  // Who has the advantage, and where.
+  const board = matchupBoard(off, def);
+  pane.append(section(
+    attacking ? `Your receivers vs ${g.oppName}` : `${g.oppName} receivers vs your coverage`,
+    table(['', 'Covered by', 'Edge'], board.map((m) => [
+      `${m.target.pos} ${m.target.name} <em>${m.target.rating}</em>`,
+      `${m.defender.pos} ${m.defender.name} <em>${m.defender.rating}</em>`,
+      `<span class="gap ${m.manGap > 6 ? 'good' : m.manGap < -6 ? 'bad' : ''}">${m.manGap > 0 ? '+' : ''}${m.manGap}</span>`,
+    ]))
+    + noteEl(attacking
+      ? 'Man coverage pays this in full. In zone it is worth about half.'
+      : 'This is where they will attack you. In zone the gap roughly halves.')));
+
+  // What has actually happened.
+  const box = boxScore(plays, 'US');
+  const mineRows = attacking ? box.offense : box.defense;
+
+  if (attacking) {
+    const pass = mineRows.filter((r) => r.att > 0);
+    const rush = mineRows.filter((r) => r.car > 0);
+    const rec = mineRows.filter((r) => r.tgt > 0);
+    if (pass.length) pane.append(section('Passing', table(['', 'C/A', 'Yds', 'TD', 'INT'],
+      pass.map((r) => [nameCell(r), `${r.comp}/${r.att}`, `${r.passYds}`, `${r.passTD}`, `${r.int}`]))));
+    if (rush.length) pane.append(section('Rushing', table(['', 'Car', 'Yds', 'Avg', 'TD', 'Lng'],
+      rush.map((r) => [nameCell(r), `${r.car}`, `${r.rushYds}`,
+        num(r.rushYds / r.car), `${r.rushTD}`, `${r.rushLong}`]))));
+    if (rec.length) pane.append(section('Receiving', table(['', 'Rec/Tgt', 'Yds', 'Avg', 'TD', 'Lng'],
+      rec.map((r) => [nameCell(r), `${r.rec}/${r.tgt}`, `${r.recYds}`,
+        num(r.rec ? r.recYds / r.rec : 0), `${r.recTD}`, `${r.recLong}`]))));
+    if (!pass.length && !rush.length) pane.append(section('Box score', note('No offensive snaps yet.')));
+  } else {
+    pane.append(section('Defense', mineRows.length
+      ? table(['', 'Tkl', 'Sack', 'PBU', 'INT'], mineRows.map((r) =>
+          [nameCell(r), `${r.tkl}`, `${r.sacks}`, `${r.pbu}`, `${r.ints}`]))
+      : note('No defensive snaps yet.')));
+  }
+
+  pane.insertAdjacentHTML('beforeend',
+    `<p class="legend">Ratings move the needle about a third as much as calling the
+     right concept against the right coverage. Over one game a box score is mostly
+     variance — the matchup board above is the signal worth acting on.</p>`);
+}
+
+const nameCell = (r) => `${r.pos} ${r.name} <em>${r.rating}</em>`;
+
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((x) => {
     const on = x === t;
@@ -628,6 +691,7 @@ document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () 
   });
   $('pane-feed').hidden = t.dataset.tab !== 'feed';
   $('pane-scout').hidden = t.dataset.tab !== 'scout';
+  $('pane-players').hidden = t.dataset.tab !== 'players';
   if (app.t?.game) render(app.t.game, app.t.plays);
 }));
 
