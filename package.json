@@ -1,0 +1,11 @@
+{
+  "name": "the-booth",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "balance": "node tools/balance.js 500"
+  },
+  "dependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
