@@ -469,18 +469,41 @@ const num = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
 const aggLabel = (v) => v <= -0.75 ? 'Ball control' : v < 0 ? 'Careful' : v === 0 ? 'Balanced' : v < 0.75 ? 'Attacking' : 'Reckless';
 
 function renderFeed(g, plays) {
-  const last = plays[plays.length - 1];
   const box = $('lastplay');
-  if (last && last.outcome) {
+  // Everything from the snap you called through any kick the CPU took after it.
+  // Showing only the newest play made your own result vanish.
+  let cut = -1;
+  for (let i = plays.length - 1; i >= 0; i--) if (plays[i].byHuman) { cut = i; break; }
+  const batch = cut >= 0 ? plays.slice(cut) : plays.slice(-1);
+
+  if (batch.length && batch[0].outcome) {
     box.hidden = false;
-    const o = last.outcome;
-    const off = last.offId ? OFF_BY_ID[last.offId]?.name : (last.special ? 'Special teams' : '');
-    const def = last.defId ? DEF_BY_ID[last.defId]?.name : '';
-    const ours = last.possession === 'US';
-    box.innerHTML = `<div class="matchup">${ours ? off : `<i>${off}</i>`} ${def ? 'vs' : ''} ${ours ? `<i>${def}</i>` : def}</div>
-      <div class="result">${o.desc || ''}</div>`;
-    if (o.readEdge < -0.02) box.append(el('div', 'tell', 'They read it. You have shown that look too often here.'));
-    if (o.predictionHit) box.append(el('div', 'tell', `Read confirmed: ${o.predictionActual}. +1 film point.`));
+    box.innerHTML = '';
+    batch.forEach((p, idx) => {
+      const o = p.outcome;
+      const off = p.offId ? OFF_BY_ID[p.offId]?.name : (p.special ? 'Special teams' : '');
+      const def = p.defId ? DEF_BY_ID[p.defId]?.name : '';
+      const ours = p.possession === 'US';
+      const row = el('div', idx ? 'then' : '');
+      row.innerHTML = `<div class="matchup">
+          <em>${situationLabel(p, g)}</em>
+          ${ours ? off : `<i>${off}</i>`}${def ? (ours ? ' vs <i>' + def + '</i>' : ' vs ' + def) : ''}
+        </div><div class="result">${o.desc || ''}</div>`;
+      if (!p.special && o.yards != null && !o.penalty) {
+        // Judge the play from the seat of whoever is reading it: an offense
+        // stalling is a bad result on your drive and a good one on your stop.
+        const onSchedule = isSuccess(p.down, p.distance, o.yards);
+        const good = ours ? onSchedule : !onSchedule;
+        const word = ours
+          ? (onSchedule ? 'on schedule' : 'behind the sticks')
+          : (onSchedule ? 'they stay on schedule' : 'stop');
+        row.querySelector('.result').insertAdjacentHTML('beforeend',
+          ` <span class="verdict ${good ? 'good' : 'bad'}">${word}</span>`);
+      }
+      if (o.readEdge < -0.02) row.append(el('div', 'tell', 'They read it. You have shown that look too often here.'));
+      if (o.predictionHit) row.append(el('div', 'tell', `Read confirmed: ${o.predictionActual}. +1 film point.`));
+      box.append(row);
+    });
   } else box.hidden = true;
 
   const feed = $('feed');
@@ -492,12 +515,24 @@ function renderFeed(g, plays) {
     else if (o.turnover) cls = 'turnover';
     else if (Math.abs(o.yards || 0) >= 15) cls = 'big';
     const li = el('li', cls,
-      `<span class="t">Q${p.quarter} ${mmss(p.clock)}</span><span>${o.desc || ''}${
-        (p.events || []).filter((e) => e.type === 'score' || e.type === 'period').map((e) => ' ' + e.text).join('')}</span>`);
+      `<span class="t">Q${p.quarter} ${mmss(p.clock)}</span>` +
+      `<span class="dd">${p.possession === 'US' ? abbr(g.teamName) : abbr(g.oppName)} ${p.down}&amp;${p.distance}</span>` +
+      `<span>${o.desc || ''}${(p.events || [])
+        .filter((e) => e.type === 'score' || e.type === 'period')
+        .map((e) => ' ' + e.text).join('')}</span>`);
     feed.append(li);
   }
 }
 
+/** "IRO 4th & 6 at the CAS 38" — names both teams, so nothing is ambiguous. */
+function situationLabel(p, g) {
+  const withBall = p.possession === 'US' ? g.teamName : g.oppName;
+  const other = p.possession === 'US' ? g.oppName : g.teamName;
+  const spot = p.ballOn === 50 ? 'midfield'
+    : p.ballOn < 50 ? `${abbr(withBall)} ${p.ballOn}` : `${abbr(other)} ${100 - p.ballOn}`;
+  const goal = p.distance >= 100 - p.ballOn;
+  return `${abbr(withBall)} ball &middot; ${ORD[p.down]} &amp; ${goal ? 'goal' : p.distance} at the ${spot}`;
+}
 
 /* ---------- scouting ---------- */
 /* Everything here is history. Nothing here tells you what is coming on this
