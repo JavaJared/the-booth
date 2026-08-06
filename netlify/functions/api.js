@@ -6,8 +6,8 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
-import { newGameState, emptyTendencies } from '../../shared/engine.js';
-import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../shared/gameflow.js';
+import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
+import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
 
 if (!getApps().length) {
   initializeApp({
