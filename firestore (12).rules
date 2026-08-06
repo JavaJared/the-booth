@@ -1,0 +1,23 @@
+rules_version = '2';
+// Clients read their own game and nothing else. Every write goes through a
+// Cloud Function, because a client that can write game state can write itself
+// a touchdown.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /games/{gameId} {
+      allow read: if request.auth != null && (
+        resource.data.seats.OC.uid == request.auth.uid ||
+        resource.data.seats.DC.uid == request.auth.uid
+      );
+      allow write: if false;
+
+      match /plays/{playId} {
+        allow read: if request.auth != null && (
+          get(/databases/$(database)/documents/games/$(gameId)).data.seats.OC.uid == request.auth.uid ||
+          get(/databases/$(database)/documents/games/$(gameId)).data.seats.DC.uid == request.auth.uid
+        );
+        allow write: if false;
+      }
+    }
+  }
+}

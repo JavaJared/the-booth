@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Booth — coordinator's game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<section id="setup" class="screen">
+  <div class="setup-card">
+    <p class="eyebrow">Two coordinators. One headset. One way out.</p>
+    <h1 class="wordmark">THE<br><em>BOOTH</em></h1>
+    <p class="lede">You and your rival run the same team's offense and defense.
+      Only one of you gets the head coaching call.</p>
+
+    <label class="field">
+      <span>Your name</span>
+      <input id="name" type="text" placeholder="Coordinator" autocomplete="off">
+    </label>
+
+    <div class="seat-pick" role="radiogroup" aria-label="Choose a seat">
+      <button class="seat-btn is-on" data-seat="OC" role="radio" aria-checked="true">
+        <b>Offensive</b><span>coordinator</span></button>
+      <button class="seat-btn" data-seat="DC" role="radio" aria-checked="false">
+        <b>Defensive</b><span>coordinator</span></button>
+    </div>
+
+    <div class="setup-actions">
+      <button id="btn-create" class="btn btn-primary">Start a game</button>
+      <div class="join-row">
+        <input id="join-code" type="text" placeholder="Game code" autocomplete="off" spellcheck="false">
+        <button id="btn-join" class="btn">Join</button>
+      </div>
+    </div>
+
+    <button id="btn-local" class="btn btn-ghost">Play both seats on this device</button>
+    <p id="setup-err" class="err" role="alert"></p>
+  </div>
+</section>
+
+<!-- ============ LOBBY ============ -->
+<section id="lobby" class="screen" hidden>
+  <div class="setup-card">
+    <p class="eyebrow">Game code</p>
+    <p class="code" id="lobby-code">—</p>
+    <p class="lede">Send this to your rival. The clock starts when you both ready up.</p>
+    <div class="roster">
+      <div class="roster-row" id="row-OC"><b>Offense</b><span>Open seat</span></div>
+      <div class="roster-row" id="row-DC"><b>Defense</b><span>Open seat</span></div>
+    </div>
+    <button id="btn-ready" class="btn btn-primary">I'm ready</button>
+  </div>
+</section>
+
+<!-- ============ GAME ============ -->
+<section id="game" class="screen" hidden>
+
+  <div class="strip">
+    <div class="playclock" id="playclock"><i id="playclock-fill"></i></div>
+    <div class="strip-inner">
+      <div class="score">
+        <span class="team" id="us-name">CASCADE</span>
+        <b id="us-score">0</b>
+      </div>
+      <div class="score away">
+        <b id="them-score">0</b>
+        <span class="team" id="them-name">IRONWORKS</span>
+      </div>
+      <div class="game-clock">
+        <b id="qtr">1ST</b><span id="clock">15:00</span>
+      </div>
+      <div class="dnd" id="dnd">1ST &amp; 10</div>
+      <div class="spot" id="spot">OWN 25</div>
+      <button id="btn-pause" class="btn btn-tiny">Pause</button>
+    </div>
+  </div>
+
+  <div class="fieldstrip" aria-hidden="true">
+    <i class="ball" id="ball"></i>
+    <i class="marker" id="marker"></i>
+  </div>
+
+  <main class="booth">
+    <div class="col-call">
+      <header class="col-head">
+        <h2 id="call-title">Your call</h2>
+        <div class="col-meta">
+          <button id="btn-seat" class="btn btn-tiny" hidden>View: offense</button>
+          <span class="film" id="film">Film <b>0</b></span>
+          <button id="btn-keys" class="btn btn-tiny">Read keys · 3</button>
+        </div>
+      </header>
+      <p class="hint" id="hint" hidden></p>
+      <div id="tempo-row" class="tempo-row" hidden>
+        <span>Tempo</span>
+        <button class="chip" data-tempo="chew">Chew clock</button>
+        <button class="chip is-on" data-tempo="normal">Normal</button>
+        <button class="chip" data-tempo="hurry">Hurry up</button>
+      </div>
+      <div id="sheet" class="sheet"></div>
+    </div>
+
+    <div class="col-feed">
+      <header class="col-head"><h2>Booth feed</h2></header>
+      <div class="lastplay" id="lastplay" hidden></div>
+      <ol class="feed" id="feed"></ol>
+      <div class="chirps" id="chirps"></div>
+      <div class="chirp-bar" id="chirp-bar"></div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ MODALS ============ -->
+<div class="veil" id="veil" hidden>
+  <div class="modal" id="modal"></div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
