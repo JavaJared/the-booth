@@ -306,3 +306,14 @@ table.scout th.n{font-family:var(--cond)}
 .legend{margin:0;font-size:.72rem;color:var(--ink-3);line-height:1.5;
   border-top:1px solid var(--hair);padding-top:.6rem}
 .legend b{color:var(--ink-2);font-weight:600}
+
+/* the result card can hold a whole batch: your snap, then any CPU kick */
+.lastplay .then{margin-top:.6rem;padding-top:.55rem;border-top:1px dashed var(--hair)}
+.lastplay .matchup em{font-style:normal;display:block;color:var(--ink-2);
+  letter-spacing:.08em;margin-bottom:.1rem}
+.verdict{font-family:var(--cond);text-transform:uppercase;letter-spacing:.1em;
+  font-size:.6rem;font-weight:600;padding:.06rem .3rem;border:1px solid currentColor;
+  border-radius:2px;vertical-align:.1em;white-space:nowrap}
+.verdict.good{color:#2F7D4F}
+.verdict.bad{color:var(--pencil)}
+.feed li .dd{color:var(--ink-3);flex:none;width:6.2rem}
