@@ -6,7 +6,7 @@
 <title>The Booth — coordinator's game</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=Inter:wght@400;500;600&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -19,7 +19,7 @@
     <p class="lede">You and your rival run the same team's offense and defense.
       Only one of you gets the head coaching call.</p>
 
-    <label class="field">
+    <label class="form-field">
       <span>Your name</span>
       <input id="name" type="text" placeholder="Coordinator" autocomplete="off">
     </label>
@@ -81,10 +81,10 @@
     </div>
   </div>
 
-  <div class="fieldstrip" aria-hidden="true">
-    <i class="ball" id="ball"></i>
-    <i class="marker" id="marker"></i>
-  </div>
+  <figure class="field">
+    <div id="field" role="img" aria-label="Field position"></div>
+    <figcaption id="field-note" class="field-note"></figcaption>
+  </figure>
 
   <main class="booth">
     <div class="col-call">
