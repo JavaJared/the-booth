@@ -1,5 +1,6 @@
 import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
+import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess } from './shared/scout.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
@@ -216,9 +217,13 @@ function render(g, plays) {
   const onClock = seatOnClock(s);
   const isMyCall = mine === onClock && g.status === 'live';
 
+  const log = plays || [];
+  app.record = callRecord(log, mine);
+
   renderStrip(g, s);
-  renderField(g, s, plays || []);
-  renderFeed(g, plays || []);
+  renderField(g, s, log);
+  renderFeed(g, log);
+  renderScouting(g, s, mine, log);
   renderChirps(g);
 
   const seatBtn = $('btn-seat');
@@ -353,7 +358,12 @@ function renderCallSheet(g, s, mine) {
   sheet.innerHTML = '';
 
   const mk = (id, name, tag, handler) => {
-    const b = el('button', 'call', `<b>${name}</b><span>${tag}</span>`);
+    // Show a call's own record once there's enough of it to mean anything.
+    const r = app.record?.[id];
+    const stat = r && r.n >= 2
+      ? `<u title="${r.n} calls, ${pct(r.success)} on schedule">${r.n}&times; &middot; ${r.ypp.toFixed(1)}</u>`
+      : '';
+    const b = el('button', 'call', `<b>${name}</b><span>${tag}</span>${stat}`);
     b.addEventListener('click', () => handler(b));
     return b;
   };
@@ -453,6 +463,9 @@ function renderPrep(g, s, mine, onClock) {
   sheet.append(rep);
 }
 
+const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+const num = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
+
 const aggLabel = (v) => v <= -0.75 ? 'Ball control' : v < 0 ? 'Careful' : v === 0 ? 'Balanced' : v < 0.75 ? 'Attacking' : 'Reckless';
 
 function renderFeed(g, plays) {
@@ -484,6 +497,104 @@ function renderFeed(g, plays) {
     feed.append(li);
   }
 }
+
+
+/* ---------- scouting ---------- */
+/* Everything here is history. Nothing here tells you what is coming on this
+   snap — that is what film points are for, and the two are meant to stack:
+   frequencies tell you it's mostly zone here, keys tell you which zone now. */
+
+function renderScouting(g, s, mine, plays) {
+  const pane = $('pane-scout');
+  if (pane.hidden) return;
+  pane.innerHTML = '';
+
+  const bucket = distBucket(s.distance);
+  const label = `${ORD[s.down]} & ${bucket === 'short' ? 'short' : bucket === 'med' ? 'medium' : 'long'}`;
+
+  // Widen the window automatically rather than showing an empty table.
+  const exact = mine === 'OC' ? shellReport(plays, s, 'exact') : opponentReport(plays, s, mine, 'exact');
+  const wide = mine === 'OC' ? shellReport(plays, s, 'down') : opponentReport(plays, s, mine, 'down');
+  const rep = exact.total >= 4 ? exact : wide;
+  const scope = exact.total >= 4 ? label : `${ORD[s.down]} down, any distance`;
+
+  pane.append(section(
+    mine === 'OC' ? `What ${g.oppName} shows on ${scope}` : `What ${g.oppName} runs on ${scope}`,
+    rep.total
+      ? table(
+          ['', 'Freq', mine === 'OC' ? 'Yds/play' : 'Yds/play', 'Success'],
+          rep.rows.slice(0, 6).map((r) => [
+            r.label, pct(r.share), num(r.ypp), pct(r.success),
+          ]))
+      : note('No snaps charted here yet.')));
+
+  // Self-scout: how readable am I right here?
+  if (mine === 'OC') {
+    const me = selfScout(plays, s, g.tendencies?.US);
+    const msg = { thin: 'Too few snaps here to have a tell yet.',
+      low: 'You are balanced here. Nothing to read.',
+      some: 'A lean is forming. They may start guessing right.',
+      high: 'You are tipping this situation. Expect them to sit on it.' }[me.risk];
+    pane.append(section(`Your calls on ${label}`,
+      (me.total
+        ? table(['', 'Freq', 'Called'], me.rows.map((r) => [r.label, pct(r.share), `${r.n}`]))
+        : note('No snaps charted here yet.')) + noteEl(msg, me.risk === 'high' ? 'warn' : '')));
+  }
+
+  // Your own best and worst calls, so the sheet earns its numbers.
+  const rec = Object.entries(app.record || {})
+    .filter(([, r]) => r.n >= 2)
+    .map(([id, r]) => ({ name: (mine === 'OC' ? OFF_BY_ID[id] : DEF_BY_ID[id])?.name || id, ...r }))
+    .sort((a, b) => (mine === 'OC' ? b.ypp - a.ypp : a.ypp - b.ypp));
+  pane.append(section(mine === 'OC' ? 'Your calls, by yards per play' : 'Your calls, by yards allowed',
+    rec.length
+      ? table(['', 'Called', 'Yds/play', 'Success'],
+          rec.slice(0, 8).map((r) => [r.name, `${r.n}`, num(r.ypp), pct(r.success)]))
+      : note('Call a play twice and it shows up here.')));
+
+  // Where the game stands.
+  const u = unitSummary(plays);
+  const o = u.offense, d = u.defense;
+  pane.append(section('This game', table(
+    ['', 'Offense', 'Defense'],
+    [
+      ['Plays', `${o.n}`, `${d.n}`],
+      ['Yards / play', num(o.ypp, 2), num(d.ypp, 2)],
+      ['Success rate', pct(o.success), pct(d.success)],
+      ['Third down', pct(o.third), pct(d.third)],
+      ['Explosives', pct(o.explosive), pct(d.explosive)],
+      ['Turnovers', `${o.turnovers}`, `${d.turnovers}`],
+    ])));
+
+  pane.insertAdjacentHTML('beforeend',
+    `<p class="legend">A play is a <b>success</b> if it keeps the drive on schedule:
+     40% of the distance on first down, 60% on second, all of it on third and fourth.</p>`);
+}
+
+function section(title, inner) {
+  const box = el('section', 'scout-block', `<h3>${title}</h3>`);
+  box.insertAdjacentHTML('beforeend', inner);
+  return box;
+}
+const note = (t) => `<p class="scout-note">${t}</p>`;
+const noteEl = (t, cls) => `<p class="scout-note ${cls || ''}">${t}</p>`;
+function table(head, rows) {
+  return `<table class="scout"><thead><tr>${head.map((h, i) =>
+    `<th${i ? ' class="n"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${
+    rows.map((r) => `<tr>${r.map((c, i) =>
+      `<td${i ? ' class="n"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach((x) => {
+    const on = x === t;
+    x.classList.toggle('is-on', on);
+    x.setAttribute('aria-selected', String(on));
+  });
+  $('pane-feed').hidden = t.dataset.tab !== 'feed';
+  $('pane-scout').hidden = t.dataset.tab !== 'scout';
+  if (app.t?.game) render(app.t.game, app.t.plays);
+}));
 
 function renderChirps(g) {
   const box = $('chirps');
