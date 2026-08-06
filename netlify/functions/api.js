@@ -51,6 +51,7 @@ const actions = {
     await ref.set({
       id: ref.id,
       status: 'lobby',
+      rosterSeed: Math.random().toString(36).slice(2, 12),
       createdAt: FieldValue.serverTimestamp(),
       teamName, oppName,
       seats: { [seat]: { uid, displayName, ready: false } },
