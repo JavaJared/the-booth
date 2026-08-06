@@ -54,7 +54,8 @@ export function runToNextDecision(gameId, game, humanCall) {
   const tendencies = JSON.parse(JSON.stringify(game.tendencies));
   const filmPoints = { ...game.filmPoints };
   const plays = [];
-  let first = true;
+  let pendingSpecial = humanCall.special || null;
+  let humanTurn = true;
   let guard = 0;
 
   while (guard++ < 8) {
@@ -62,64 +63,60 @@ export function runToNextDecision(gameId, game, humanCall) {
     const humanHasBall = state.possession === 'US';
     const rngCpu = cpuRng(gameId, i);
     const rng = playRng(gameId, i);
-
-    // Special teams: the human picks on their own fourth downs, the CPU decides
-    // on theirs — and a CPU punt shouldn't make the DC call a defense.
-    let special = first ? humanCall.special || null : null;
-    if (!special && !(first && humanHasBall) && !humanHasBall && state.down === 4) {
-      const d = cpuFourthDown(state, rngCpu);
-      if (d !== 'go') special = d;
-    }
-
-    if (special) {
-      const before = JSON.parse(JSON.stringify(state));
-      const r = resolveSpecial(state, special, rng);
-      plays.push(logEntry(i, before, r.outcome, r.events, { special }));
-      state = r.state;
-      first = false;
-      if (state.status === 'final') break;
-      if (state.possession === 'US' || state.down !== 4) break;
-      continue;
-    }
-
-    let offId, defId;
-    if (humanHasBall) {
-      offId = first ? humanCall.callId : cpuOffensiveCall(state, tendencies.US, rngCpu);
-      defId = cpuDefensiveCall(state, tendencies.US, rngCpu);
-    } else {
-      offId = cpuOffensiveCall(state, tendencies.CPU, rngCpu, { runLean: 0.1 });
-      defId = first ? humanCall.callId : cpuDefensiveCall(state, tendencies.CPU, rngCpu);
-    }
-    const off = OFF_BY_ID[offId], def = DEF_BY_ID[defId];
-    if (!off || !def) throw new Error(`unknown call ${offId} / ${defId}`);
-
-    const side = humanHasBall ? 'US' : 'CPU';
     const before = JSON.parse(JSON.stringify(state));
-    recordTendency(tendencies[side], state, off.family);
 
-    const plan = humanHasBall ? game.gameplan.OC : null;
-    const outcome = resolveSnap(state, offId, defId, rng, tendencies[side], { offense: plan });
-    const { state: next, events } = advance(state, outcome, {
-      tempo: humanHasBall ? game.gameplan.OC?.tempo : 'normal',
-    });
+    if (pendingSpecial) {
+      const r = resolveSpecial(state, pendingSpecial, rng);
+      plays.push(logEntry(i, before, r.outcome, r.events, { special: pendingSpecial, byHuman: humanTurn }));
+      state = r.state;
+    } else {
+      let offId, defId;
+      if (humanHasBall) {
+        offId = humanTurn ? humanCall.callId : cpuOffensiveCall(state, tendencies.US, rngCpu);
+        defId = cpuDefensiveCall(state, tendencies.US, rngCpu);
+      } else {
+        offId = cpuOffensiveCall(state, tendencies.CPU, rngCpu, { runLean: 0.1 });
+        defId = humanTurn ? humanCall.callId : cpuDefensiveCall(state, tendencies.CPU, rngCpu);
+      }
+      const off = OFF_BY_ID[offId], def = DEF_BY_ID[defId];
+      if (!off || !def) throw new Error(`unknown call ${offId} / ${defId}`);
 
-    // Grade the idle coordinator's read.
-    if (first && game.pending?.prediction?.playIndex === i) {
-      const pred = game.pending.prediction;
-      const actual = humanHasBall
-        ? (def.rush > 4 ? 'blitz' : def.cov.startsWith('man') ? 'man' : 'zone')
-        : off.family;
-      outcome.predictionActual = actual;
-      outcome.predictionHit = actual === pred.guess;
-      outcome.predictionSeat = pred.seat;
-      if (outcome.predictionHit) filmPoints[pred.seat] = (filmPoints[pred.seat] || 0) + 1;
+      const side = humanHasBall ? 'US' : 'CPU';
+      recordTendency(tendencies[side], state, off.family);
+
+      const plan = humanHasBall ? game.gameplan.OC : null;
+      const outcome = resolveSnap(state, offId, defId, rng, tendencies[side], { offense: plan });
+      const { state: next, events } = advance(state, outcome, {
+        tempo: humanHasBall ? game.gameplan.OC?.tempo : 'normal',
+      });
+
+      // Grade the idle coordinator's read.
+      if (humanTurn && game.pending?.prediction?.playIndex === i) {
+        const pred = game.pending.prediction;
+        const actual = humanHasBall
+          ? (def.rush > 4 ? 'blitz' : def.cov.startsWith('man') ? 'man' : 'zone')
+          : off.family;
+        outcome.predictionActual = actual;
+        outcome.predictionHit = actual === pred.guess;
+        outcome.predictionSeat = pred.seat;
+        if (outcome.predictionHit) filmPoints[pred.seat] = (filmPoints[pred.seat] || 0) + 1;
+      }
+
+      plays.push(logEntry(i, before, outcome, events, { offId, defId, byHuman: humanTurn }));
+      state = next;
     }
 
-    plays.push(logEntry(i, before, outcome, events, { offId, defId }));
-    state = next;
-    first = false;
+    humanTurn = false;
+    pendingSpecial = null;
+
+    // Can another snap run with no human input? Only a CPU kick qualifies —
+    // if the CPU is going for it, the defensive coordinator calls that down.
     if (state.status === 'final') break;
-    if (state.possession === 'US' || state.down !== 4) break;
+    if (state.possession === 'US') break;
+    if (state.down !== 4) break;
+    const decision = cpuFourthDown(state, cpuRng(gameId, state.playIndex));
+    if (decision === 'go') break;
+    pendingSpecial = decision;
   }
 
   return { plays, state, tendencies, filmPoints };
