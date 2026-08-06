@@ -6,6 +6,9 @@ import {
   OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID,
   FAMILIES, PERS_WEIGHT, DEF_PERS_WEIGHT,
 } from './playbook.js';
+import {
+  pickTarget, coverDefender, pickTackler, pickRusher, talentEdge, protectionFactor, bySpot,
+} from './roster.js';
 
 // ---------------------------------------------------------------- RNG
 export function hashSeed(str) {
@@ -183,11 +186,25 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const readEdge = tendencyRead(off, def, tendencies, state);
   const planEdge = planEdgeFor(off, plans.offense);
-  const edge = computeEdge(off, def, { readEdge, planEdge, tendencies });
+
+  // Who is actually on the field for this snap.
+  const offRoster = plans.offRoster, defRoster = plans.defRoster;
+  let cast = null, talent = 0;
+  if (offRoster && defRoster) {
+    const target = pickTarget(off, offRoster, rng);
+    const defender = off.family === 'run'
+      ? pickTackler(off, def, defRoster, rng)
+      : coverDefender(target?.spot, def, defRoster);
+    cast = { target, defender, qb: bySpot(offRoster).QB, rusher: pickRusher(def, defRoster, rng) };
+    talent = talentEdge(off, def, target, defender, offRoster, defRoster);
+  }
+
+  const edge = computeEdge(off, def, { readEdge, planEdge, tendencies }) + talent;
 
   const base = {
     offId, defId, offName: off.name, defName: def.name,
     family: off.family, edge: +edge.toFixed(3), readEdge: +readEdge.toFixed(3),
+    talent: +talent.toFixed(3),
     yards: 0, turnover: null, complete: null, sack: false, touchdown: false,
     outOfBounds: false, clockStops: false, penalty: null,
   };
@@ -201,9 +218,10 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const res = off.family === 'run'
     ? resolveRun(off, def, edge, rng)
-    : resolvePass(off, def, edge, rng);
+    : resolvePass(off, def, edge, rng, offRoster);
 
   const out = { ...base, ...res };
+  if (cast) out.cast = creditPlay(off, out, cast);
 
   // Post-snap penalty on a live play.
   if (pen && !out.turnover && pen.id !== 'fs' && pen.id !== 'offside' && pen.id !== 'ineligible') {
@@ -225,6 +243,26 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
   }
 
   return out;
+}
+
+/** Turn an outcome into a line in the box score. */
+function creditPlay(off, out, cast) {
+  const nm = (p) => (p ? { name: p.name, pos: p.pos, spot: p.spot, rating: p.rating } : null);
+  const c = { defender: nm(cast.defender) };
+  if (off.family === 'run') {
+    c.carrier = nm(cast.target);
+    c.tackler = nm(cast.defender);
+  } else if (out.sack) {
+    c.passer = nm(cast.qb);
+    c.sacker = nm(cast.rusher);
+  } else {
+    c.passer = nm(cast.qb);
+    c.target = nm(cast.target);
+    if (out.turnover === 'interception') c.interceptor = nm(cast.defender);
+    else if (out.complete) c.tackler = nm(cast.defender);
+    else if (out.complete === false) c.breakup = nm(cast.defender);
+  }
+  return c;
 }
 
 function planEdgeFor(off, plan) {
@@ -256,9 +294,9 @@ function resolveRun(off, def, edge, rng) {
   return { yards: y, desc: y >= 15 ? `Breaks through for ${y}.` : `Gain of ${y}.` };
 }
 
-function resolvePass(off, def, edge, rng) {
+function resolvePass(off, def, edge, rng, offRoster) {
   const extraRush = def.rush - 4;
-  const protection = 1 - 0.045 * PERS_WEIGHT[off.pers];
+  const protection = (1 - 0.045 * PERS_WEIGHT[off.pers]) * (offRoster ? protectionFactor(offRoster) : 1);
   const sackP = clamp(
     off.sack * (1 + 0.55 * extraRush * (1 - off.blitzFit)) * protection,
     0.005, 0.30
