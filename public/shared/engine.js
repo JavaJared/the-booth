@@ -458,7 +458,7 @@ export function resolveSpecial(state, type, rng) {
       events.push({ type: 'score', text: `${dist}-yard field goal is good.` });
       const r = kickoff(s, events, other(s.possession), { desc: 'FG' }, {});
       r.state.playIndex += 1;
-      return { ...r, outcome: { desc: `${dist}-yard field goal is good.`, special: 'fg', made: true, yards: 0 } };
+      return { ...r, outcome: { desc: `${dist}-yard field goal is good.`, special: 'fg', made: true, yards: 0, kickDist: dist } };
     }
     events.push({ type: 'miss', text: `${dist}-yard attempt is no good.` });
     s.possession = other(s.possession);
@@ -466,7 +466,7 @@ export function resolveSpecial(state, type, rng) {
     s.clockStopped = true;
     const r = newDrive(s, events, { desc: 'miss' }, {});
     r.state.playIndex += 1;
-    return { ...r, outcome: { desc: `${dist}-yard attempt is no good.`, special: 'fg', made: false, yards: 0 } };
+    return { ...r, outcome: { desc: `${dist}-yard attempt is no good.`, special: 'fg', made: false, yards: 0, kickDist: dist } };
   }
 
   if (type === 'punt') {
@@ -480,7 +480,7 @@ export function resolveSpecial(state, type, rng) {
     events.push({ type: 'punt', text: `Punt nets ${net} yards.` });
     const r = newDrive(s, events, { desc: 'punt' }, {});
     r.state.playIndex += 1;
-    return { ...r, outcome: { desc: `Punt nets ${net} yards.`, special: 'punt', yards: 0 } };
+    return { ...r, outcome: { desc: `Punt nets ${net} yards.`, special: 'punt', yards: 0, net } };
   }
 
   if (type === 'kneel') {
