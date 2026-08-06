@@ -1,0 +1,6 @@
+{
+  "name": "booth-api",
+  "type": "module",
+  "private": true,
+  "dependencies": { "firebase-admin": "^12.6.0" }
+}
