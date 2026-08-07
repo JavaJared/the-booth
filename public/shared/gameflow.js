@@ -58,9 +58,13 @@ export function runToNextDecision(gameId, game, humanCall) {
   let pendingSpecial = humanCall.special || null;
   let humanTurn = true;
   let guard = 0;
-  const rosters = makeRosters(game.rosterSeed || gameId);
+  // In a solo season your counterpart is an AI coordinator, so one seat runs
+  // itself. In two-player this is null and both seats belong to humans.
+  const autoSeat = game.autoSeat || null;
+  // A season hands us the real teams; an exhibition falls back to the seed.
+  const rosters = game.rosters || makeRosters(game.rosterSeed || gameId);
 
-  while (guard++ < 8) {
+  while (guard++ < 400) {
     const i = state.playIndex;
     const humanHasBall = state.possession === 'US';
     const rngCpu = cpuRng(gameId, i);
@@ -115,14 +119,17 @@ export function runToNextDecision(gameId, game, humanCall) {
     humanTurn = false;
     pendingSpecial = null;
 
-    // Can another snap run with no human input? Only a CPU kick qualifies —
-    // if the CPU is going for it, the defensive coordinator calls that down.
+    // Can another snap run without a human? Two cases qualify: the side with
+    // the ball is choosing to kick, or the unit on the clock is AI-run.
     if (state.status === 'final') break;
-    if (state.possession === 'US') break;
-    if (state.down !== 4) break;
-    const decision = cpuFourthDown(state, cpuRng(gameId, state.playIndex));
-    if (decision === 'go') break;
-    pendingSpecial = decision;
+    const offenseIsOurs = state.possession === 'US';
+    const offenseIsAuto = offenseIsOurs ? autoSeat === 'OC' : true;
+    if (state.down === 4 && offenseIsAuto) {
+      const decision = cpuFourthDown(state, cpuRng(gameId, state.playIndex), offenseIsOurs);
+      if (decision !== 'go') { pendingSpecial = decision; continue; }
+    }
+    if (seatOnClock(state) === autoSeat) continue;
+    break;
   }
 
   return { plays, state, tendencies, filmPoints };
