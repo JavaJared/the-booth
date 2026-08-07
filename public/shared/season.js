@@ -1,0 +1,225 @@
+// season.js — the campaign. Owns the calendar and the results table; the
+// snap-by-snap game and the fast simulation both feed into it in the same
+// shape, so a game you called and a game your staff handled are worth the
+// same on a résumé.
+import { makeSchedule, TEAMS, TEAM_BY_ID, fullName, sortedStandings,
+  playoffBracket, wildCardRound, reseed } from './league.js';
+import { makeLeagueRosters, teamStrength } from './roster.js';
+import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
+import { mulberry32, hashSeed } from './engine.js';
+import { isSuccess } from './scout.js';
+
+export const REGULAR_WEEKS = 18;
+const ROUND_NAMES = { 19: 'Wild Card', 20: 'Divisional', 21: 'Conference Championship', 22: 'The Final' };
+export const weekLabel = (w) => (w <= REGULAR_WEEKS ? `Week ${w}` : ROUND_NAMES[w] || 'Offseason');
+
+export function createSeason({ seed, userTeam, year = 2026 }) {
+  const ids = TEAMS.map((t) => t.id);
+  const rosters = makeLeagueRosters(seed, ids);
+  return {
+    seed, year, userTeam,
+    week: 1,
+    phase: 'regular',
+    schedule: makeSchedule(seed),
+    rosters,
+    strength: Object.fromEntries(ids.map((id) => [id, teamStrength(rosters[id])])),
+    results: [],
+    playoffs: null,
+  };
+}
+
+export const resultFor = (season, gameId) => season.results.find((r) => r.id === gameId);
+export const weekGames = (season, week) => season.schedule.games.filter((g) => g.week === week);
+
+/** The user's game this week, or null on a bye. */
+export function userGame(season, week = season.week) {
+  if (season.phase === 'playoffs') {
+    return (season.playoffs?.games || []).find(
+      (g) => g.week === week && (g.home === season.userTeam || g.away === season.userTeam)) || null;
+  }
+  return weekGames(season, week).find(
+    (g) => g.home === season.userTeam || g.away === season.userTeam) || null;
+}
+
+export function record(season, teamId = season.userTeam) {
+  const row = sortedStandings(season.results.filter((r) => !r.playoff)).byId[teamId];
+  return row || { w: 0, l: 0, t: 0 };
+}
+
+/* ------------------------------------------------------------ live games */
+
+/** Everything the snap engine needs to run the user's game this week. */
+export function liveConfig(season, game) {
+  const us = season.userTeam;
+  const them = game.home === us ? game.away : game.home;
+  return {
+    gameId: game.id,
+    us, them,
+    atHome: game.home === us,
+    teamName: TEAM_BY_ID[us].name,
+    oppName: TEAM_BY_ID[them].name,
+    rosters: { US: season.rosters[us], CPU: season.rosters[them] },
+    firstPossession: mulberry32(hashSeed(`${season.seed}:${game.id}:toss`))() < 0.5 ? 'US' : 'CPU',
+  };
+}
+
+/**
+ * Convert a finished live game into the same stat shape fastsim produces.
+ * Without this the résumé would compare unlike numbers.
+ */
+export function statsFromPlays(plays, state, cfg) {
+  const side = (poss) => {
+    const snaps = plays.filter((p) => p.possession === poss && p.offId && p.outcome
+      && !(p.outcome.penalty && p.outcome.penalty.replay));
+    const yards = snaps.reduce((a, p) => a + (p.outcome.yards || 0), 0);
+    const thirds = snaps.filter((p) => p.down === 3);
+    const rush = snaps.filter((p) => p.outcome.cast?.carrier);
+    return {
+      plays: snaps.length,
+      yards,
+      ypp: snaps.length ? +(yards / snaps.length).toFixed(2) : 0,
+      rushYards: rush.reduce((a, p) => a + (p.outcome.yards || 0), 0),
+      passYards: yards - rush.reduce((a, p) => a + (p.outcome.yards || 0), 0),
+      third: thirds.length
+        ? +(thirds.filter((p) => (p.outcome.yards || 0) >= p.distance).length / thirds.length).toFixed(3) : 0,
+      success: snaps.length
+        ? +(snaps.filter((p) => isSuccess(p.down, p.distance, p.outcome.yards || 0)).length / snaps.length).toFixed(3) : 0,
+      explosive: snaps.length
+        ? +(snaps.filter((p) => (p.outcome.yards || 0) >= 20).length / snaps.length).toFixed(3) : 0,
+      turnovers: snaps.filter((p) => p.outcome.turnover).length,
+    };
+  };
+
+  const ours = side('US'), theirs = side('CPU');
+  ours.points = state.score.us; ours.pointsAllowed = state.score.them;
+  theirs.points = state.score.them; theirs.pointsAllowed = state.score.us;
+
+  const usIsHome = cfg.atHome;
+  return {
+    id: cfg.gameId,
+    home: usIsHome ? cfg.us : cfg.them,
+    away: usIsHome ? cfg.them : cfg.us,
+    homeScore: usIsHome ? state.score.us : state.score.them,
+    awayScore: usIsHome ? state.score.them : state.score.us,
+    final: true,
+    played: true,
+    homeStats: usIsHome ? ours : theirs,
+    awayStats: usIsHome ? theirs : ours,
+  };
+}
+
+/* ------------------------------------------------------------ advancing */
+
+/** Simulate every game this week that has no result yet. */
+export function simRemainingWeek(season, week = season.week) {
+  const done = new Set(season.results.map((r) => r.id));
+  const pending = (season.phase === 'playoffs'
+    ? (season.playoffs?.games || []).filter((g) => g.week === week)
+    : weekGames(season, week)).filter((g) => !done.has(g.id));
+  const fresh = pending.map((g) => ({
+    ...simGame(g.id, g.home, g.away, season.strength, season.seed),
+    week,
+    playoff: season.phase === 'playoffs',
+  }));
+  return { ...season, results: [...season.results, ...fresh] };
+}
+
+/** Close the week out and move the calendar forward. */
+export function advanceWeek(season) {
+  let s = simRemainingWeek(season);
+  if (s.phase === 'regular' && s.week >= REGULAR_WEEKS) return startPlayoffs(s);
+  if (s.phase === 'playoffs') return advancePlayoffs(s);
+  return { ...s, week: s.week + 1 };
+}
+
+/* ------------------------------------------------------------ playoffs */
+
+function startPlayoffs(season) {
+  const seeds = playoffBracket(season.results.filter((r) => !r.playoff));
+  const games = [];
+  for (const conf of ['N', 'S']) {
+    for (const m of wildCardRound(seeds[conf])) {
+      games.push({ id: `po19-${conf}-${m.home.id}-${m.away.id}`, week: 19, conf,
+        home: m.home.id, away: m.away.id });
+    }
+  }
+  return {
+    ...season,
+    phase: 'playoffs',
+    week: 19,
+    playoffs: { seeds, games, alive: { N: seeds.N.map((s) => s.id), S: seeds.S.map((s) => s.id) } },
+  };
+}
+
+function advancePlayoffs(season) {
+  const p = season.playoffs;
+  const thisRound = p.games.filter((g) => g.week === season.week);
+  const survivors = { N: [], S: [] };
+
+  for (const conf of ['N', 'S']) {
+    const before = p.alive[conf];
+    const out = new Set();
+    for (const g of thisRound.filter((x) => x.conf === conf)) {
+      const r = season.results.find((x) => x.id === g.id);
+      if (!r) continue;
+      out.add(r.homeScore >= r.awayScore ? g.away : g.home);
+    }
+    survivors[conf] = before.filter((id) => !out.has(id));
+  }
+
+  const next = season.week + 1;
+  if (next === 22) {
+    // Both conference champions are decided; one game left.
+    const a = survivors.N[0], b = survivors.S[0];
+    if (!a || !b) return { ...season, phase: 'done' };
+    return { ...season, week: 22, playoffs: { ...p, alive: survivors,
+      games: [...p.games, { id: `po22-${a}-${b}`, week: 22, conf: 'F', home: a, away: b }] } };
+  }
+  if (next > 22) {
+    const fin = season.results.find((r) => r.id.startsWith('po22'));
+    return { ...season, phase: 'done',
+      champion: fin ? (fin.homeScore >= fin.awayScore ? fin.home : fin.away) : null };
+  }
+
+  const seedOf = (conf, id) => p.seeds[conf].find((s) => s.id === id);
+  const games = [...p.games];
+  for (const conf of ['N', 'S']) {
+    const { games: pairs } = reseed(survivors[conf].map((id) => seedOf(conf, id)));
+    for (const m of pairs) {
+      games.push({ id: `po${next}-${conf}-${m.home.id}-${m.away.id}`, week: next, conf,
+        home: m.home.id, away: m.away.id });
+    }
+  }
+  return { ...season, week: next, playoffs: { ...p, alive: survivors, games } };
+}
+
+/* ------------------------------------------------------------ the résumé */
+
+/**
+ * What a hiring team would actually look at: your unit's rank in the league,
+ * the record, and how much of it you called yourself.
+ */
+export function resume(season, seat) {
+  const reg = season.results.filter((r) => !r.playoff);
+  const stats = seasonUnitStats(reg, TEAMS.map((t) => t.id));
+  const ranks = unitRanks(stats);
+  const mine = stats.find((s) => s.id === season.userTeam);
+  const unit = seat === 'OC' ? 'offense' : 'defense';
+  const rec = record(season);
+  const called = reg.filter((r) => r.played && (r.home === season.userTeam || r.away === season.userTeam)).length;
+
+  return {
+    unit,
+    record: rec,
+    gamesCalled: called,
+    gamesPlayed: rec.w + rec.l + rec.t,
+    stats: mine[unit],
+    ranks: {
+      ypp: ranks[unit].ypp[season.userTeam],
+      points: ranks[unit].points[season.userTeam],
+      third: ranks[unit].third[season.userTeam],
+      turnovers: ranks[unit].turnovers[season.userTeam],
+    },
+    league: { stats, ranks },
+  };
+}
