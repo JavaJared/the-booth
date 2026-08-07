@@ -6,7 +6,7 @@
 <title>The Booth — coordinator's game</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=Inter:wght@400;500;600&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=Inter:wght@400;500;600&family=Caveat:wght@600;700&family=Oxanium:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -61,22 +61,30 @@
 <!-- ============ GAME ============ -->
 <section id="game" class="screen" hidden>
 
-  <div class="strip">
-    <div class="playclock" id="playclock"><i id="playclock-fill"></i></div>
-    <div class="strip-inner">
-      <div class="score">
-        <span class="team" id="us-name">CASCADE</span>
-        <b id="us-score">0</b>
+  <div class="board">
+    <div class="board-main">
+      <div class="side">
+        <i class="poss" id="poss-us" hidden></i>
+        <span class="tname" id="us-name">CASCADE</span>
+        <b class="tscore" id="us-score">0</b>
       </div>
-      <div class="score away">
-        <b id="them-score">0</b>
-        <span class="team" id="them-name">IRONWORKS</span>
+
+      <div class="center">
+        <div class="cell"><b id="qtr">1ST</b><span>Qtr</span></div>
+        <div class="cell wide"><b id="clock">15:00</b><span>Time</span></div>
+        <div class="cell" id="playcell"><b id="playclock">&ndash;&ndash;</b><span>Play</span></div>
       </div>
-      <div class="game-clock">
-        <b id="qtr">1ST</b><span id="clock">15:00</span>
+
+      <div class="side away">
+        <b class="tscore" id="them-score">0</b>
+        <span class="tname" id="them-name">IRONWORKS</span>
+        <i class="poss" id="poss-them" hidden></i>
       </div>
-      <div class="dnd" id="dnd">1ST &amp; 10</div>
-      <div class="spot" id="spot">OWN 25</div>
+    </div>
+
+    <div class="board-situation">
+      <span class="dnd" id="dnd">1st &amp; 10</span>
+      <span class="spot" id="spot">own 25</span>
       <button id="btn-pause" class="btn btn-tiny">Pause</button>
     </div>
   </div>
