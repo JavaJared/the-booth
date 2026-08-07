@@ -2,6 +2,9 @@ import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
 import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
+import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
+  liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS } from './shared/season.js';
+import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
@@ -20,13 +23,15 @@ class LocalTransport {
   emit() { this.listeners.forEach((f) => f(this.game, this.plays)); }
   subscribe(f) { this.listeners.push(f); if (this.game) f(this.game, this.plays); }
 
-  async create({ name, seat, teamName = 'Cascade', oppName = 'Ironworks' }) {
+  async create({ name, seat, teamName = 'Cascade', oppName = 'Ironworks', rosters, firstPossession, autoSeat }) {
     this.gameId = 'local-' + Math.random().toString(36).slice(2, 8);
     this.game = {
       id: this.gameId, status: 'live', teamName, oppName,
       rosterSeed: Math.random().toString(36).slice(2, 12),
+      rosters,
+      autoSeat: autoSeat || null,
       seats: { OC: { displayName: 'Offense', ready: true }, DC: { displayName: 'Defense', ready: true } },
-      state: newGameState({ firstPossession: Math.random() < 0.5 ? 'US' : 'CPU' }),
+      state: newGameState({ firstPossession: firstPossession || (Math.random() < 0.5 ? 'US' : 'CPU') }),
       tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
       gameplan: { OC: { aggression: 0, tempo: 'normal' }, DC: { aggression: 0, tempo: 'normal' } },
       filmPoints: { OC: 0, DC: 0 }, pending: {}, pause: { state: 'none' }, chirps: [],
@@ -201,7 +206,231 @@ async function connectFirebase() {
 }
 
 function show(id) {
-  ['setup', 'lobby', 'game'].forEach((s) => { $(s).hidden = s !== id; });
+  ['setup', 'lobby', 'season', 'game'].forEach((s) => { $(s).hidden = s !== id; });
+}
+
+/* ============================================================ season
+   Local seasons live in this tab and survive a refresh. Losing seventeen
+   weeks of work to an accidental reload would be unforgivable. */
+
+const SAVE_KEY = 'booth:season';
+
+function saveSeason() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ season: app.season, seat: app.seat })); }
+  catch (e) { /* private browsing or quota — the season still works in memory */ }
+}
+function loadSeason() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+export function clearSeason() { try { localStorage.removeItem(SAVE_KEY); } catch {} }
+
+$('btn-season').addEventListener('click', () => {
+  const saved = loadSeason();
+  if (saved?.season) {
+    modal(`<h2>Season in progress</h2><p>You are ${weekLabel(saved.season.week).toLowerCase()} with the
+      ${fullName(saved.season.userTeam)}. Pick up where you left off?</p>
+      <div class="modal-actions"><button class="btn btn-primary" data-a="resume">Resume</button>
+      <button class="btn" data-a="new">Start fresh</button></div>`, (act) => {
+      closeModal();
+      if (act === 'resume') { app.season = saved.season; app.seat = saved.seat || 'OC'; openSeason(); }
+      else { clearSeason(); pickTeam(); }
+    });
+    return;
+  }
+  pickTeam();
+});
+
+function pickTeam() {
+  const opts = TEAMS.map((t) => `<option value="${t.id}">${t.city} ${t.name}</option>`).join('');
+  modal(`<h2>Take the job</h2>
+    <p>Pick the club you are joining. You and your rival share it — one calls offense, one calls defense.</p>
+    <label class="form-field"><span>Club</span>
+      <select id="team-pick" class="select">${opts}</select></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" data-a="OC">Coordinate the offense</button>
+      <button class="btn btn-primary" data-a="DC">Coordinate the defense</button>
+    </div>`, (act) => {
+    const team = document.getElementById('team-pick').value;
+    app.seat = act;
+    app.season = createSeason({ seed: Math.random().toString(36).slice(2, 10), userTeam: team });
+    closeModal();
+    saveSeason();
+    openSeason();
+  });
+}
+
+function openSeason() {
+  app.inSeason = true;
+  show('season');
+  renderSeason();
+}
+
+function renderSeason() {
+  const S = app.season;
+  const t = TEAM_BY_ID[S.userTeam];
+  const rec = seasonRecord(S);
+  $('my-city').textContent = t.city;
+  $('my-name').textContent = t.name;
+  $('my-rec').textContent = `${rec.w}-${rec.l}${rec.t ? '-' + rec.t : ''}`;
+  $('week-label').textContent = weekLabel(S.week);
+  $('season-year').textContent = S.year;
+  $('my-seat').textContent = app.seat === 'OC' ? 'Offense' : 'Defense';
+  const tab = document.querySelector('.season-tabs .tab.is-on')?.dataset.stab || 'week';
+  const pane = $('season-pane');
+  pane.innerHTML = '';
+  ({ week: paneWeek, standings: paneStandings, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
+  saveSeason();
+}
+
+document.querySelectorAll('.season-tabs .tab').forEach((t) => t.addEventListener('click', () => {
+  document.querySelectorAll('.season-tabs .tab').forEach((x) => {
+    const on = x === t;
+    x.classList.toggle('is-on', on);
+    x.setAttribute('aria-selected', String(on));
+  });
+  renderSeason();
+}));
+
+function paneWeek(pane, S) {
+  const g = userGame(S);
+  const done = g && S.results.find((r) => r.id === g.id);
+
+  if (!g) {
+    pane.append(card('Bye week', `<p class="scout-note">No game. Rest the starters and get ahead on film.</p>`));
+  } else {
+    const cfg = liveConfig(S, g);
+    const oppRec = seasonRecord(S, cfg.them);
+    const box = el('section', 'matchup');
+    box.innerHTML = `<div class="matchup-line">
+        <span class="ha">${cfg.atHome ? 'vs' : 'at'}</span>
+        <b>${fullName(cfg.them)}</b>
+        <span class="oppRec">${oppRec.w}-${oppRec.l}${oppRec.t ? '-' + oppRec.t : ''}</span>
+      </div>`;
+    if (done) {
+      const usScore = cfg.atHome ? done.homeScore : done.awayScore;
+      const themScore = cfg.atHome ? done.awayScore : done.homeScore;
+      const verdict = usScore > themScore ? 'won' : usScore < themScore ? 'lost' : 'tied';
+      box.insertAdjacentHTML('beforeend',
+        `<p class="final-score ${verdict}">${verdict === 'won' ? 'Won' : verdict === 'lost' ? 'Lost' : 'Tied'}
+         ${usScore}&ndash;${themScore}${done.played ? '' : ' <em>(staff called it)</em>'}</p>`);
+    } else {
+      const actions = el('div', 'matchup-actions');
+      const call = el('button', 'btn btn-primary', 'Call the game');
+      call.addEventListener('click', () => startSeasonGame(cfg));
+      const sim = el('button', 'btn', 'Let the staff handle it');
+      sim.addEventListener('click', () => {
+        app.season = simRemainingWeek(app.season);
+        renderSeason();
+      });
+      actions.append(call, sim);
+      box.append(actions);
+      box.insertAdjacentHTML('beforeend',
+        `<p class="scout-note">Your staff calls an average game. Beating average is how you build a résumé.</p>`);
+    }
+    pane.append(box);
+  }
+
+  // The rest of the league.
+  const list = (S.phase === 'playoffs' ? (S.playoffs?.games || []).filter((x) => x.week === S.week)
+    : weekGames(S, S.week)).filter((x) => !g || x.id !== g.id);
+  const rows = list.map((x) => {
+    const r = S.results.find((y) => y.id === x.id);
+    return [`${TEAM_BY_ID[x.away].name} at ${TEAM_BY_ID[x.home].name}`,
+      r ? `${r.awayScore}&ndash;${r.homeScore}` : '&mdash;'];
+  });
+  pane.append(card('Around the league', table(['', 'Final'], rows)));
+
+  const ready = !g || !!done;
+  const next = el('div', 'season-actions');
+  const btn = el('button', 'btn btn-primary', S.phase === 'done' ? 'Season complete'
+    : S.week >= REGULAR_WEEKS && S.phase === 'regular' ? 'Start the playoffs' : 'Advance to next week');
+  btn.disabled = !ready || S.phase === 'done';
+  btn.addEventListener('click', () => { app.season = advanceWeek(app.season); renderSeason(); });
+  next.append(btn);
+  if (!ready) next.append(el('p', 'scout-note', 'Play or sim your game first.'));
+  pane.append(next);
+}
+
+function paneStandings(pane, S) {
+  const st = sortedStandings(S.results.filter((r) => !r.playoff));
+  for (const conf of ['N', 'S']) {
+    const wrap = el('div', 'conf-block', `<h2 class="conf-title">${conf === 'N' ? 'Northern' : 'Southern'} Conference</h2>`);
+    for (const div of DIVISIONS.filter((d) => d[0] === conf)) {
+      wrap.append(card(div, table(['', 'W', 'L', 'PF', 'PA'],
+        st.divisions[div].map((r) => [
+          `${r.id === S.userTeam ? '<mark>' : ''}${fullName(r.id)}${r.id === S.userTeam ? '</mark>' : ''}`,
+          `${r.w}`, `${r.l}`, `${r.pf}`, `${r.pa}`]))));
+    }
+    pane.append(wrap);
+  }
+}
+
+function paneResume(pane, S) {
+  const R = resume(S, app.seat);
+  const label = app.seat === 'OC' ? 'Offense' : 'Defense';
+  pane.append(card(`${label} — where you rank`, table(['', 'You', 'League rank'], [
+    ['Yards per play', R.stats.ypp.toFixed(2), ordinal(R.ranks.ypp)],
+    [app.seat === 'OC' ? 'Points per game' : 'Points allowed', R.stats.pointsPerGame.toFixed(1), ordinal(R.ranks.points)],
+    ['Third down', (R.stats.third * 100).toFixed(1) + '%', ordinal(R.ranks.third)],
+    ['Turnovers per game', R.stats.turnoversPerGame.toFixed(2), ordinal(R.ranks.turnovers)],
+  ]) + `<p class="scout-note">Record ${R.record.w}&ndash;${R.record.l}. You called
+    ${R.gamesCalled} of ${R.gamesPlayed} games yourself.</p>`));
+
+  const rows = R.league.stats
+    .map((s) => ({ id: s.id, v: s[R.unit].ypp }))
+    .sort((a, b) => (app.seat === 'OC' ? b.v - a.v : a.v - b.v))
+    .slice(0, 8)
+    .map((r, i) => [`${i + 1}. ${fullName(r.id)}`, r.v.toFixed(2)]);
+  pane.append(card(`League leaders — ${label.toLowerCase()} yards per play`, table(['', 'Y/P'], rows)));
+}
+
+function paneBracket(pane, S) {
+  if (!S.playoffs) {
+    pane.append(card('Playoffs', `<p class="scout-note">The bracket sets after week ${REGULAR_WEEKS}.</p>`));
+    return;
+  }
+  for (const conf of ['N', 'S']) {
+    pane.append(card(`${conf === 'N' ? 'Northern' : 'Southern'} seeds`,
+      table(['', 'Seed', 'Record'], S.playoffs.seeds[conf].map((s) => [
+        `${s.id === S.userTeam ? '<mark>' : ''}${fullName(s.id)}${s.id === S.userTeam ? '</mark>' : ''}`,
+        `${s.seed}`, `${s.w}-${s.l}`]))));
+  }
+  const played = S.playoffs.games.map((g) => {
+    const r = S.results.find((x) => x.id === g.id);
+    return [weekLabel(g.week), `${TEAM_BY_ID[g.away].name} at ${TEAM_BY_ID[g.home].name}`,
+      r ? `${r.awayScore}&ndash;${r.homeScore}` : '&mdash;'];
+  });
+  if (played.length) pane.append(card('Results', table(['Round', '', 'Final'], played)));
+  if (S.champion) pane.append(card('Champion', `<p class="scout-note">${fullName(S.champion)}.</p>`));
+}
+
+const ordinal = (n) => {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+function card(title, inner) {
+  const box = el('section', 'scout-block', `<h3>${title}</h3>`);
+  box.insertAdjacentHTML('beforeend', inner);
+  return box;
+}
+
+/** Hand this week's matchup to the snap engine. */
+async function startSeasonGame(cfg) {
+  app.t = new LocalTransport();
+  await app.t.create({
+    name: app.name, seat: app.seat,
+    teamName: cfg.teamName, oppName: cfg.oppName,
+    rosters: cfg.rosters, firstPossession: cfg.firstPossession,
+    autoSeat: app.seat === 'OC' ? 'DC' : 'OC',
+  });
+  app.liveCfg = cfg;
+  app.viewSeat = app.seat;
+  app.t.subscribe(render);
+  show('game');
 }
 
 /* ---------- render ---------- */
@@ -215,7 +444,7 @@ function render(g, plays) {
   show('game');
 
   const s = g.state;
-  const mine = app.t.local ? (app.viewSeat || seatOnClock(s)) : app.t.mySeat;
+  const mine = app.inSeason ? app.seat : (app.t.local ? (app.viewSeat || seatOnClock(s)) : app.t.mySeat);
   const onClock = seatOnClock(s);
   const isMyCall = mine === onClock && g.status === 'live';
 
@@ -230,7 +459,7 @@ function render(g, plays) {
   renderChirps(g);
 
   const seatBtn = $('btn-seat');
-  seatBtn.hidden = !app.t.local;
+  seatBtn.hidden = !app.t.local || !!app.inSeason;
   seatBtn.textContent = `View: ${mine === 'OC' ? 'offense' : 'defense'}`;
 
   $('film').innerHTML = `Film <b>${g.filmPoints?.[mine] || 0}</b>`;
@@ -795,7 +1024,20 @@ function renderFinal(g, plays) {
     <div class="final-line"><span>Defense — yards allowed per play</span><b>${ypp(their)}</b></div>
     <div class="final-line"><span>Defense — third down allowed</span><b>${third(their)}</b></div>
     <div class="modal-actions" style="margin-top:1.25rem">
-      <button class="btn btn-primary" data-a="again">Run it back</button></div>`, () => location.reload());
+      <button class="btn btn-primary" data-a="again">${app.inSeason ? 'Back to the season' : 'Run it back'}</button>
+    </div>`, () => {
+    if (!app.inSeason) return location.reload();
+    // Fold the result into the season in the same shape a simulated game
+    // produces, then let the rest of the week play out.
+    const res = statsFromPlays(plays, s, app.liveCfg);
+    res.week = app.season.week;
+    res.playoff = app.season.phase === 'playoffs';
+    app.season = { ...app.season, results: [...app.season.results, res] };
+    app.season = simRemainingWeek(app.season);
+    closeModal();
+    app.t = null; app.liveCfg = null;
+    openSeason();
+  });
 }
 
 function modal(html, cb) {
