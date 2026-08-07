@@ -32,14 +32,15 @@
     </div>
 
     <div class="setup-actions">
-      <button id="btn-create" class="btn btn-primary">Start a game</button>
+      <button id="btn-season" class="btn btn-primary">Start a season</button>
+      <button id="btn-create" class="btn">Exhibition game with a friend</button>
       <div class="join-row">
         <input id="join-code" type="text" placeholder="Game code" autocomplete="off" spellcheck="false">
         <button id="btn-join" class="btn">Join</button>
       </div>
     </div>
 
-    <button id="btn-local" class="btn btn-ghost">Play both seats on this device</button>
+    <button id="btn-local" class="btn btn-ghost">Single exhibition game, both seats here</button>
     <p id="setup-err" class="err" role="alert"></p>
   </div>
 </section>
@@ -56,6 +57,31 @@
     </div>
     <button id="btn-ready" class="btn btn-primary">I'm ready</button>
   </div>
+</section>
+
+<!-- ============ SEASON ============ -->
+<section id="season" class="screen" hidden>
+  <header class="season-head">
+    <div class="season-bar">
+      <div class="my-team">
+        <span class="city" id="my-city">Spokane</span>
+        <b id="my-name">Cascade</b>
+        <span class="rec" id="my-rec">0-0</span>
+      </div>
+      <div class="wk">
+        <b id="week-label">Week 1</b>
+        <span id="season-year">2026</span>
+      </div>
+      <div class="seat-badge" id="my-seat">Offense</div>
+    </div>
+    <div class="tabs season-tabs" role="tablist">
+      <button class="tab is-on" data-stab="week" role="tab" aria-selected="true">This week</button>
+      <button class="tab" data-stab="standings" role="tab" aria-selected="false">Standings</button>
+      <button class="tab" data-stab="resume" role="tab" aria-selected="false">Résumé</button>
+      <button class="tab" data-stab="bracket" role="tab" aria-selected="false">Playoffs</button>
+    </div>
+  </header>
+  <main id="season-pane" class="season-pane"></main>
 </section>
 
 <!-- ============ GAME ============ -->
