@@ -93,6 +93,40 @@ export function makeRosters(seed) {
 
 export const bySpot = (list) => Object.fromEntries(list.map((p) => [p.spot, p]));
 
+/**
+ * Every roster in the league, generated once when the league is created.
+ * Names are unique league-wide, which a per-team call could not guarantee —
+ * at 32 teams the birthday problem produces collisions otherwise.
+ * Generated deterministically so a league is reproducible from its seed, then
+ * stored: once free agency and the draft exist, rosters stop being a pure
+ * function of the seed and the stored copy becomes the truth.
+ */
+export function makeLeagueRosters(seed, teamIds) {
+  const used = new Set();
+  const out = {};
+  for (const id of teamIds) {
+    const nums = new Set();
+    out[id] = {
+      offense: build(mulberry32(hashSeed(`${seed}:${id}:off`)), OFF_SPOTS, used, nums),
+      defense: build(mulberry32(hashSeed(`${seed}:${id}:def`)), DEF_SPOTS, used, nums),
+    };
+  }
+  return out;
+}
+
+/** Collapse a roster into the two numbers a fast simulation needs. */
+export function teamStrength(roster) {
+  const o = bySpot(roster.offense), d = bySpot(roster.defense);
+  const avg = (...ps) => ps.reduce((a, p) => a + (p?.rating || 75), 0) / ps.length;
+  return {
+    off: 0.30 * (o.QB?.rating || 75)
+       + 0.34 * avg(o.WR1, o.WR2, o.WR3, o.TE1, o.RB1)
+       + 0.36 * (o.OL?.rating || 75),
+    def: 0.50 * avg(d.EDGE1, d.EDGE2, d.DT, d.LB1, d.LB2)
+       + 0.50 * avg(d.CB1, d.CB2, d.NB, d.S1, d.S2),
+  };
+}
+
 /** Who the coverage puts on a given receiver. In zone the matchup softens,
  *  because no single defender owns him. */
 const MAN_ASSIGN = { WR1: 'CB1', WR2: 'CB2', WR3: 'NB', TE1: 'S1', TE2: 'LB1', RB1: 'LB2', RB2: 'LB2', QB: 'LB1' };
