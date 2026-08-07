@@ -247,7 +247,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
 /** Turn an outcome into a line in the box score. */
 function creditPlay(off, out, cast) {
-  const nm = (p) => (p ? { name: p.name, pos: p.pos, spot: p.spot, rating: p.rating } : null);
+  const nm = (p) => (p ? { name: p.name, pos: p.pos, spot: p.spot, rating: p.rating, number: p.number } : null);
   const c = { defender: nm(cast.defender) };
   if (off.family === 'run') {
     c.carrier = nm(cast.target);
