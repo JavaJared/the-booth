@@ -628,10 +628,13 @@ function softmaxPick(cands, rng, temp) {
 }
 
 /** Fourth down logic for the CPU offense. Returns 'go' | 'fg' | 'punt'. */
-export function cpuFourthDown(state, rng) {
+export function cpuFourthDown(state, rng, forUs = false) {
   const toGo = state.distance;
   const fgP = fieldGoalProb(state.ballOn);
-  const trailing = state.score.them - state.score.us; // from CPU's view (CPU = them)
+  // Positive means the side with the ball is behind.
+  const trailing = forUs
+    ? state.score.us - state.score.them
+    : state.score.them - state.score.us;
   const desperate = state.quarter >= 4 && state.clock < 300 && trailing < 0;
   if (state.ballOn >= 62 && fgP > 0.62 && !(desperate && toGo <= 2 && state.ballOn >= 92)) {
     if (!(toGo <= 1 && state.ballOn >= 95)) return 'fg';
