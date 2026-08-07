@@ -9,10 +9,15 @@
   --pencil:#C4362B; --pencil-soft:rgba(196,54,43,.13);
   --turf:#DCE8D3; --turf-ez:#BED3B2; --turf-line:#FFFFFF;
   --los:#3E7BC4; --gain:#E8C33C;
+  /* the board above the field: a different object from the pad, so it gets
+     its own dark, high-contrast palette */
+  --board:#191C1F; --board-cell:#23282C; --board-edge:#0E1012;
+  --led:#F6A821; --led-white:#EDF1F3; --led-dim:#79828A; --led-hot:#FF5F41;
   --sans:'Inter',system-ui,sans-serif;
   --cond:'Archivo Narrow',var(--sans);
   --hand:'Caveat',cursive;
   --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
+  --led-face:'Oxanium',var(--cond);
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -106,23 +111,67 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
 .roster-row span{font-family:var(--hand);font-size:1.15rem;color:var(--ink-2)}
 .roster-row.is-ready span{color:var(--pencil)}
 
-/* ---------- scoreboard band ---------- */
-.strip{position:sticky;top:0;z-index:20;background:var(--pad);
-  border-bottom:1.5px solid var(--ink)}
-.playclock{height:3px;background:var(--hair)}
-.playclock i{display:block;height:100%;width:100%;background:var(--ink-3);
-  transform-origin:left;transition:transform 1s linear}
-.playclock.is-urgent i{background:var(--pencil)}
-.strip-inner{display:flex;align-items:center;gap:1.1rem;padding:.5rem .9rem;
-  max-width:76rem;margin:0 auto;flex-wrap:wrap}
-.score{display:flex;align-items:baseline;gap:.45rem}
-.score .team{font-size:.74rem;color:var(--ink-3)}
-.score b{font-family:var(--cond);font-size:1.55rem;font-weight:700;line-height:1}
-.game-clock{display:flex;align-items:baseline;gap:.4rem;margin-left:auto;
-  font-family:var(--mono);font-size:.88rem;font-variant-numeric:tabular-nums}
-.game-clock b{font-size:.72rem;color:var(--ink-3)}
-.dnd{font-size:.95rem;letter-spacing:.07em}
-.spot{font-size:.74rem;color:var(--ink-3)}
+/* ---------- the scoreboard ---------- */
+.board{position:sticky;top:0;z-index:20;background:var(--board);
+  border-bottom:3px solid var(--board-edge);
+  box-shadow:0 6px 18px -12px rgba(12,16,20,.75)}
+.board-main{display:flex;align-items:stretch;gap:clamp(.5rem,2vw,1.5rem);
+  max-width:76rem;margin:0 auto;padding:.55rem clamp(.6rem,2vw,1.1rem) .4rem}
+
+/* Team name to the outside, score tucked against the clock cluster — the
+   scores are what you glance at, so they sit next to the time, not stranded
+   against the edge of the screen. */
+.side{display:flex;align-items:center;gap:clamp(.4rem,1.4vw,.9rem);flex:1;min-width:0;
+  justify-content:space-between}
+.tname{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+  font-weight:600;font-size:clamp(.72rem,2vw,1rem);color:var(--led-white);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tscore{font-family:var(--led-face);font-weight:700;font-size:clamp(2.1rem,7vw,3.4rem);
+  line-height:.95;color:var(--led);font-variant-numeric:tabular-nums;
+  text-shadow:0 0 18px rgba(246,168,33,.35)}
+/* possession: the ball sits with whoever has it */
+.poss{width:.85rem;height:.6rem;border-radius:50%/58%;background:var(--led-white);
+  flex:none;box-shadow:0 0 10px rgba(237,241,243,.5)}
+
+.center{display:flex;align-items:stretch;gap:.35rem;flex:none}
+.cell{background:var(--board-cell);border-radius:3px;padding:.3rem .55rem .25rem;
+  min-width:clamp(3rem,9vw,4.2rem);display:flex;flex-direction:column;
+  align-items:center;justify-content:center}
+.cell.wide{min-width:clamp(4.2rem,12vw,6rem)}
+.cell b{font-family:var(--led-face);font-weight:700;
+  font-size:clamp(1.15rem,3.6vw,1.85rem);line-height:1.05;color:var(--led-white);
+  font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.cell span{font-family:var(--cond);text-transform:uppercase;letter-spacing:.16em;
+  font-size:.55rem;font-weight:600;color:var(--led-dim);margin-top:.1rem}
+.cell.wide b{color:var(--led)}
+#playcell b{color:var(--led)}
+#playcell.is-urgent{background:rgba(255,95,65,.16)}
+#playcell.is-urgent b{color:var(--led-hot);animation:pulse 1s steps(2,end) infinite}
+@keyframes pulse{50%{opacity:.45}}
+
+.board-situation{position:relative;display:flex;align-items:baseline;
+  justify-content:center;gap:clamp(.5rem,2vw,1rem);max-width:76rem;margin:0 auto;
+  padding:0 clamp(.6rem,2vw,1.1rem) .5rem;flex-wrap:wrap}
+/* Down and distance drives every call, so it outranks the clock. */
+.board-situation .dnd{font-family:var(--led-face);font-weight:700;
+  font-size:clamp(1.05rem,3.6vw,1.5rem);text-transform:uppercase;letter-spacing:.05em;
+  color:var(--led)}
+.board-situation .spot{font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.13em;font-size:clamp(.66rem,1.8vw,.78rem);font-weight:600;
+  color:var(--led-dim)}
+.board-situation .btn-tiny{position:absolute;right:clamp(.6rem,2vw,1.1rem);bottom:.5rem;
+  background:transparent;border-color:var(--led-dim);color:var(--led-dim);box-shadow:none}
+.board-situation .btn-tiny:hover{transform:none;color:var(--led-white);
+  border-color:var(--led-white)}
+
+@media (max-width:560px){
+  .board-main{gap:.4rem;padding:.45rem .5rem .3rem}
+  .center{gap:.25rem}
+  .cell{padding:.25rem .35rem .2rem}
+  /* No room to float the button on a phone; put it back in the flow. */
+  .board-situation{justify-content:space-between}
+  .board-situation .btn-tiny{position:static}
+}
 
 /* ---------- the field ---------- */
 .field{margin:0;background:var(--pad);border-bottom:1px solid var(--hair);
@@ -255,8 +304,6 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
 
 @media (max-width:820px){
   .booth{grid-template-columns:1fr;gap:1.6rem}
-  .strip-inner{gap:.65rem;padding:.45rem .7rem}
-  .game-clock{margin-left:0}
   .feed{max-height:16rem}
   .field{padding:.5rem .6rem .4rem}
 }
@@ -326,3 +373,7 @@ table.scout td:first-child{white-space:nowrap;overflow:hidden;text-overflow:elli
 .gap{font-family:var(--mono);font-weight:600}
 .gap.good{color:#2F7D4F}
 .gap.bad{color:var(--pencil)}
+
+.jersey{font-family:var(--mono);font-size:.64rem;font-weight:400;color:var(--ink-3);
+  display:inline-block;min-width:1.5rem;text-align:right;margin-right:.35rem}
+table.scout td:first-child{max-width:13rem}
