@@ -222,7 +222,7 @@ function render(g, plays) {
   const log = plays || [];
   app.record = callRecord(log, mine);
 
-  renderStrip(g, s);
+  renderBoard(g, s);
   renderField(g, s, log);
   renderFeed(g, log);
   renderScouting(g, s, mine, log);
@@ -264,17 +264,24 @@ function renderLobby(g) {
   }
 }
 
-function renderStrip(g, s) {
-  $('us-name').textContent = abbr(g.teamName);
-  $('them-name').textContent = abbr(g.oppName);
+function renderBoard(g, s) {
+  $('us-name').textContent = g.teamName.toUpperCase();
+  $('them-name').textContent = g.oppName.toUpperCase();
   $('us-score').textContent = s.score.us;
   $('them-score').textContent = s.score.them;
   $('qtr').textContent = ORD[s.quarter] || 'OT';
   $('clock').textContent = mmss(s.clock);
-  $('dnd').textContent = `${ORD[s.down]} & ${s.distance >= 100 - s.ballOn ? 'GOAL' : s.distance}`;
+
+  $('poss-us').hidden = s.possession !== 'US';
+  $('poss-them').hidden = s.possession !== 'CPU';
+
+  const goalToGo = s.distance >= 100 - s.ballOn;
+  $('dnd').textContent = `${ORD[s.down]} & ${goalToGo ? 'Goal' : s.distance}`;
+
   const side = s.possession === 'US' ? g.teamName : g.oppName;
-  $('spot').textContent = s.ballOn === 50 ? 'MIDFIELD'
-    : s.ballOn < 50 ? `${abbr(side)} ${s.ballOn}` : `${abbr(s.possession === 'US' ? g.oppName : g.teamName)} ${100 - s.ballOn}`;
+  $('spot').textContent = s.ballOn === 50 ? 'Ball on midfield'
+    : s.ballOn < 50 ? `Ball on ${abbr(side)} ${s.ballOn}`
+    : `Ball on ${abbr(s.possession === 'US' ? g.oppName : g.teamName)} ${100 - s.ballOn}`;
 }
 
 /* The field is drawn on the same pad as the call sheet: green wash, printed
@@ -643,8 +650,8 @@ function renderPlayers(g, mine, plays) {
   pane.append(section(
     attacking ? `Your receivers vs ${g.oppName}` : `${g.oppName} receivers vs your coverage`,
     table(['', 'Covered by', 'Edge'], board.map((m) => [
-      `${m.target.pos} ${m.target.name} <em>${m.target.rating}</em>`,
-      `${m.defender.pos} ${m.defender.name} <em>${m.defender.rating}</em>`,
+      nameCell(m.target),
+      nameCell(m.defender),
       `<span class="gap ${m.manGap > 6 ? 'good' : m.manGap < -6 ? 'bad' : ''}">${m.manGap > 0 ? '+' : ''}${m.manGap}</span>`,
     ]))
     + noteEl(attacking
@@ -681,7 +688,7 @@ function renderPlayers(g, mine, plays) {
      variance — the matchup board above is the signal worth acting on.</p>`);
 }
 
-const nameCell = (r) => `${r.pos} ${r.name} <em>${r.rating}</em>`;
+const nameCell = (r) => `<b class="jersey">${r.number ?? ''}</b>${r.pos} ${r.name} <em>${r.rating}</em>`;
 
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((x) => {
@@ -753,18 +760,22 @@ function managePause(g) {
 
 function managePlayClock(g) {
   clearInterval(app.tick);
-  const bar = $('playclock');
-  const fill = $('playclock-fill');
+  const cell = $('playcell');
+  const out = $('playclock');
   const deadline = g.pending?.deadline;
-  if (!deadline || g.status !== 'live') { fill.style.transform = 'scaleX(1)'; bar.classList.remove('is-urgent'); return; }
+  if (!deadline || g.status !== 'live') {
+    out.innerHTML = '&ndash;&ndash;';
+    cell.classList.remove('is-urgent');
+    return;
+  }
   const paint = () => {
-    const left = Math.max(0, deadline - Date.now());
-    fill.style.transform = `scaleX(${left / PLAY_CLOCK_MS})`;
-    bar.classList.toggle('is-urgent', left < 10000);
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    out.textContent = String(left).padStart(2, '0');
+    cell.classList.toggle('is-urgent', left <= 10);
     if (left <= 0) clearInterval(app.tick);
   };
   paint();
-  app.tick = setInterval(paint, 1000);
+  app.tick = setInterval(paint, 250);
 }
 
 function renderFinal(g, plays) {
