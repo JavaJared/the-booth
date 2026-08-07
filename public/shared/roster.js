@@ -3,38 +3,31 @@
 // keeps 40 player objects out of Firestore while letting both the server and
 // every client reproduce the identical roster.
 import { mulberry32, hashSeed } from './engine.js';
-
-const FIRST = ['Marcus','Dre','Elijah','Cade','Trevon','Jalen','Beau','Isaiah','Rashad','Nico',
-  'Griffin','Amari','Devonte','Luka','Kingsley','Tanner','Emeka','Roman','Silas','Kobe',
-  'Xavier','Damari','Foster','Jaxon','Terrence','Quinn','Malachi','Bodie','Zion','Auden'];
-const LAST = ['Whitlock','Ferreira','Boateng','Nakamura','Alvarez','Pruitt','Okafor','Lindqvist',
-  'Castellano','Ryder','Abaimov','Delacroix','Mbeki','Sorensen','Vasquez','Hollins','Tanaka',
-  'Kowalski','Ibarra','Feldman','Duarte','Nwosu','Sandoval','Kilgore','Petrov','Achebe',
-  'Larkin','Osei','Vitale','Ranganathan'];
+import { FIRST, LAST, RESERVED } from './names.js';
 
 // role: how the position is used. base: rating centre. spread: how much it varies.
 export const OFF_SPOTS = [
-  { id: 'QB',  label: 'QB',  base: 78, spread: 8 },
-  { id: 'RB1', label: 'RB',  base: 77, spread: 8 },
-  { id: 'RB2', label: 'RB',  base: 70, spread: 7 },
-  { id: 'WR1', label: 'WR',  base: 81, spread: 8 },
-  { id: 'WR2', label: 'WR',  base: 75, spread: 8 },
-  { id: 'WR3', label: 'WR',  base: 71, spread: 8 },
-  { id: 'TE1', label: 'TE',  base: 75, spread: 8 },
-  { id: 'TE2', label: 'TE',  base: 67, spread: 7 },
-  { id: 'OL',  label: 'OL',  base: 76, spread: 6 },
+  { id: 'QB',  label: 'QB',  base: 78, spread: 8, nums: [[1, 19]] },
+  { id: 'RB1', label: 'RB',  base: 77, spread: 8, nums: [[20, 39]] },
+  { id: 'RB2', label: 'RB',  base: 70, spread: 7, nums: [[20, 39]] },
+  { id: 'WR1', label: 'WR',  base: 81, spread: 8, nums: [[10, 19], [80, 89]] },
+  { id: 'WR2', label: 'WR',  base: 75, spread: 8, nums: [[10, 19], [80, 89]] },
+  { id: 'WR3', label: 'WR',  base: 71, spread: 8, nums: [[10, 19], [80, 89]] },
+  { id: 'TE1', label: 'TE',  base: 75, spread: 8, nums: [[40, 49], [84, 89]] },
+  { id: 'TE2', label: 'TE',  base: 67, spread: 7, nums: [[40, 49], [84, 89]] },
+  { id: 'OL',  label: 'OL',  base: 76, spread: 6, nums: [[60, 79]] },
 ];
 export const DEF_SPOTS = [
-  { id: 'EDGE1', label: 'EDGE', base: 79, spread: 8 },
-  { id: 'EDGE2', label: 'EDGE', base: 73, spread: 8 },
-  { id: 'DT',    label: 'DT',   base: 76, spread: 7 },
-  { id: 'LB1',   label: 'LB',   base: 77, spread: 8 },
-  { id: 'LB2',   label: 'LB',   base: 71, spread: 7 },
-  { id: 'CB1',   label: 'CB',   base: 80, spread: 9 },
-  { id: 'CB2',   label: 'CB',   base: 73, spread: 9 },
-  { id: 'NB',    label: 'NB',   base: 71, spread: 8 },
-  { id: 'S1',    label: 'S',    base: 77, spread: 8 },
-  { id: 'S2',    label: 'S',    base: 72, spread: 8 },
+  { id: 'EDGE1', label: 'EDGE', base: 79, spread: 8, nums: [[50, 59], [90, 99]] },
+  { id: 'EDGE2', label: 'EDGE', base: 73, spread: 8, nums: [[50, 59], [90, 99]] },
+  { id: 'DT',    label: 'DT',   base: 76, spread: 7, nums: [[60, 79], [90, 99]] },
+  { id: 'LB1',   label: 'LB',   base: 77, spread: 8, nums: [[40, 59]] },
+  { id: 'LB2',   label: 'LB',   base: 71, spread: 7, nums: [[40, 59]] },
+  { id: 'CB1',   label: 'CB',   base: 80, spread: 9, nums: [[20, 39]] },
+  { id: 'CB2',   label: 'CB',   base: 73, spread: 9, nums: [[20, 39]] },
+  { id: 'NB',    label: 'NB',   base: 71, spread: 8, nums: [[20, 39]] },
+  { id: 'S1',    label: 'S',    base: 77, spread: 8, nums: [[20, 49]] },
+  { id: 'S2',    label: 'S',    base: 72, spread: 8, nums: [[20, 49]] },
 ];
 
 function gauss(rng, mean, sd) {
@@ -44,28 +37,57 @@ function gauss(rng, mean, sd) {
   return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function build(rng, spots) {
-  const used = new Set();
-  return spots.map((s) => {
-    let name;
-    do {
-      name = `${FIRST[Math.floor(rng() * FIRST.length)]} ${LAST[Math.floor(rng() * LAST.length)]}`;
-    } while (used.has(name));
-    used.add(name);
-    return {
-      spot: s.id, pos: s.label, name,
-      rating: Math.round(Math.max(52, Math.min(97, gauss(rng, s.base, s.spread)))),
-      number: 1 + Math.floor(rng() * 98),
-    };
-  });
+/** Draw a name that is neither already on a roster nor a real player's.
+ *  At 364,000 combinations the real-player collision stops being hypothetical
+ *  over a long career mode, so it is checked rather than hoped away. */
+function drawName(rng, used) {
+  for (let i = 0; i < 60; i++) {
+    const name = `${FIRST[Math.floor(rng() * FIRST.length)]} ${LAST[Math.floor(rng() * LAST.length)]}`;
+    if (!used.has(name) && !RESERVED.has(name.toLowerCase())) { used.add(name); return name; }
+  }
+  // Effectively unreachable, but never hand back a duplicate.
+  let n = 2, base = `${FIRST[Math.floor(rng() * FIRST.length)]} ${LAST[Math.floor(rng() * LAST.length)]}`;
+  while (used.has(`${base} ${'I'.repeat(n)}`)) n++;
+  const name = `${base} ${'I'.repeat(n)}`;
+  used.add(name);
+  return name;
+}
+
+function drawNumber(rng, ranges, taken) {
+  for (let i = 0; i < 40; i++) {
+    const [lo, hi] = ranges[Math.floor(rng() * ranges.length)];
+    const n = lo + Math.floor(rng() * (hi - lo + 1));
+    if (!taken.has(n)) { taken.add(n); return n; }
+  }
+  for (let n = 1; n < 100; n++) if (!taken.has(n)) { taken.add(n); return n; }
+  return 0;
+}
+
+function build(rng, spots, used, taken) {
+  return spots.map((s) => ({
+    spot: s.id,
+    pos: s.label,
+    name: drawName(rng, used),
+    rating: Math.round(Math.max(52, Math.min(97, gauss(rng, s.base, s.spread)))),
+    number: drawNumber(rng, s.nums, taken),
+  }));
 }
 
 /** Both teams, offense and defense, from one seed. */
 export function makeRosters(seed) {
   const r = (tag) => mulberry32(hashSeed(`${seed}:${tag}`));
+  // Names are unique across the whole game; numbers only within a team.
+  const used = new Set();
+  const usNums = new Set(), cpuNums = new Set();
   return {
-    US: { offense: build(r('us-off'), OFF_SPOTS), defense: build(r('us-def'), DEF_SPOTS) },
-    CPU: { offense: build(r('cpu-off'), OFF_SPOTS), defense: build(r('cpu-def'), DEF_SPOTS) },
+    US: {
+      offense: build(r('us-off'), OFF_SPOTS, used, usNums),
+      defense: build(r('us-def'), DEF_SPOTS, used, usNums),
+    },
+    CPU: {
+      offense: build(r('cpu-off'), OFF_SPOTS, used, cpuNums),
+      defense: build(r('cpu-def'), DEF_SPOTS, used, cpuNums),
+    },
   };
 }
 
