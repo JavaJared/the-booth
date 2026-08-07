@@ -377,3 +377,53 @@ table.scout td:first-child{white-space:nowrap;overflow:hidden;text-overflow:elli
 .jersey{font-family:var(--mono);font-size:.64rem;font-weight:400;color:var(--ink-3);
   display:inline-block;min-width:1.5rem;text-align:right;margin-right:.35rem}
 table.scout td:first-child{max-width:13rem}
+
+/* ---------- season ---------- */
+.season-head{position:sticky;top:0;z-index:20;background:var(--board);
+  border-bottom:3px solid var(--board-edge)}
+.season-bar{display:flex;align-items:center;gap:1rem;max-width:60rem;margin:0 auto;
+  padding:.6rem clamp(.7rem,2vw,1.1rem) .45rem}
+.my-team{display:flex;align-items:baseline;gap:.5rem;min-width:0;flex:1}
+.my-team .city{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+  font-size:.7rem;font-weight:600;color:var(--led-dim)}
+.my-team b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.06em;
+  font-size:clamp(1.1rem,3.4vw,1.5rem);font-weight:700;color:var(--led-white)}
+.my-team .rec{font-family:var(--led-face);font-weight:700;font-size:1.15rem;color:var(--led);
+  font-variant-numeric:tabular-nums}
+.wk{text-align:center}
+.wk b{display:block;font-family:var(--led-face);font-weight:700;font-size:1.05rem;color:var(--led-white)}
+.wk span{font-family:var(--cond);letter-spacing:.16em;font-size:.6rem;font-weight:600;color:var(--led-dim)}
+.seat-badge{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+  font-size:.66rem;font-weight:600;color:var(--board);background:var(--led);
+  padding:.2rem .55rem;border-radius:2px;flex:none}
+.season-tabs{max-width:60rem;margin:0 auto;padding:0 clamp(.7rem,2vw,1.1rem)}
+.season-tabs .tab{color:var(--led-dim)}
+.season-tabs .tab:hover{color:var(--led-white)}
+.season-tabs .tab.is-on{color:var(--board);background:var(--led);border-color:var(--led)}
+.season-pane{max-width:60rem;margin:0 auto;padding:1.3rem clamp(.7rem,2vw,1.1rem) 3.5rem}
+
+.matchup{background:var(--pad);border:1px solid var(--ink);border-radius:2px;
+  padding:1.1rem;margin-bottom:.9rem}
+.matchup-line{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.matchup-line .ha{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;
+  font-size:.72rem;font-weight:600;color:var(--ink-3)}
+.matchup-line b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.03em;
+  font-size:clamp(1.25rem,4vw,1.7rem);font-weight:700}
+.matchup-line .oppRec{font-family:var(--mono);font-size:.85rem;color:var(--ink-3)}
+.matchup-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin:.9rem 0 .2rem}
+.final-score{font-family:var(--cond);text-transform:uppercase;letter-spacing:.05em;
+  font-size:1.3rem;font-weight:700;margin:.7rem 0 0}
+.final-score em{font-style:normal;font-family:var(--sans);text-transform:none;
+  letter-spacing:0;font-size:.8rem;font-weight:400;color:var(--ink-3)}
+.final-score.won{color:#2F7D4F}
+.final-score.lost{color:var(--pencil)}
+.season-actions{margin-top:1.1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
+.season-actions .scout-note{padding:0}
+.conf-block{margin-bottom:1.4rem}
+.conf-title{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;
+  font-size:.75rem;font-weight:600;color:var(--ink-3);margin:0 0 .55rem;
+  border-bottom:1.5px solid var(--ink);padding-bottom:.3rem}
+table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
+  padding:0 .2rem;box-decoration-break:clone}
+.select{width:100%;background:var(--pad);border:1px solid var(--ink);border-radius:2px;
+  padding:.5rem .55rem;font-family:var(--sans);font-size:.92rem}
