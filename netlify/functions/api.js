@@ -44,6 +44,13 @@ async function mySeat(gameId, uid) {
 
 // ------------------------------------------------------------------ actions
 const actions = {
+  /** Confirms the function is deployed, the token verified, and admin
+   *  credentials actually reach Firestore. */
+  async ping(uid) {
+    const probe = await db.collection('_health').doc('ping').get();
+    return { uid, firestore: true, existed: probe.exists, at: new Date().toISOString() };
+  },
+
   async createGame(uid, { seat = 'OC', displayName = 'Coordinator',
     teamName = 'Cascade', oppName = 'Ironworks' }) {
     if (!['OC', 'DC'].includes(seat)) bad('Pick OC or DC.');
@@ -55,6 +62,7 @@ const actions = {
       createdAt: FieldValue.serverTimestamp(),
       teamName, oppName,
       seats: { [seat]: { uid, displayName, ready: false } },
+      uids: [uid],   // what firestore.rules checks for read access
       state: newGameState({ firstPossession: Math.random() < 0.5 ? 'US' : 'CPU' }),
       tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
       gameplan: { OC: { aggression: 0, tempo: 'normal' }, DC: { aggression: 0, tempo: 'normal' } },
@@ -76,7 +84,10 @@ const actions = {
       if (existing) return { seat: existing };
       const open = !g.seats.OC ? 'OC' : !g.seats.DC ? 'DC' : null;
       if (!open) throw new ApiError(409, 'Both seats are taken.');
-      tx.update(ref, { [`seats.${open}`]: { uid, displayName, ready: false } });
+      tx.update(ref, {
+        [`seats.${open}`]: { uid, displayName, ready: false },
+        uids: FieldValue.arrayUnion(uid),
+      });
       return { seat: open };
     });
   },
