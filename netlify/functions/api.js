@@ -53,6 +53,16 @@ function admin() {
 
 const store = () => getFirestore(admin());
 const gameRef = (id) => store().collection('games').doc(id);
+const seasonRef = (id) => store().collection('seasons').doc(id);
+
+async function loadSeason(id, uid) {
+  const snap = await seasonRef(id).get();
+  if (!snap.exists) throw new ApiError(404, 'No season with that code.');
+  const doc = snap.data();
+  const seat = doc.seats?.OC?.uid === uid ? 'OC' : doc.seats?.DC?.uid === uid ? 'DC' : null;
+  if (!seat) throw new ApiError(403, 'You are not in this season.');
+  return { doc, seat, season: hydrate(doc) };
+}
 const bad = (msg) => { throw new ApiError(400, msg); };
 
 function seatOf(game, uid) {
@@ -82,6 +92,136 @@ const actions = {
       at: new Date().toISOString(),
     };
   },
+
+  /* ------------------------------------------------------------ seasons */
+
+  async createSeason(uid, { seat = 'OC', displayName = 'Coordinator', teamId }) {
+    if (!['OC', 'DC'].includes(seat)) bad('Pick OC or DC.');
+    if (!TEAM_BY_ID[teamId]) bad('Unknown club.');
+    const seed = Math.random().toString(36).slice(2, 10);
+    const base = dehydrate(createSeason({ seed, userTeam: teamId }));
+    const ref = seasonRef(store().collection('seasons').doc().id);
+    await ref.set({
+      ...base,
+      id: ref.id,
+      createdAt: FieldValue.serverTimestamp(),
+      seats: { [seat]: { uid, displayName } },
+      uids: [uid],
+      vote: { OC: null, DC: null },
+      currentGameId: null,
+    });
+    return { seasonId: ref.id, seat };
+  },
+
+  async joinSeason(uid, { seasonId, displayName = 'Coordinator' }) {
+    return store().runTransaction(async (tx) => {
+      const ref = seasonRef(seasonId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ApiError(404, 'No season with that code.');
+      const d = snap.data();
+      if (d.seats?.OC?.uid === uid) return { seat: 'OC' };
+      if (d.seats?.DC?.uid === uid) return { seat: 'DC' };
+      const open = !d.seats?.OC ? 'OC' : !d.seats?.DC ? 'DC' : null;
+      if (!open) throw new ApiError(409, 'Both coordinator seats are taken.');
+      tx.update(ref, {
+        [`seats.${open}`]: { uid, displayName },
+        uids: FieldValue.arrayUnion(uid),
+      });
+      return { seat: open };
+    });
+  },
+
+  /**
+   * Each coordinator says whether they want to call this week's game.
+   * Simulating needs both to agree; either one can insist on playing it,
+   * because calling plays is the whole point and nobody should be able to
+   * skip their rival's game for them.
+   */
+  async voteWeek(uid, { seasonId, choice }) {
+    if (!['call', 'sim'].includes(choice)) bad('Choice must be call or sim.');
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
+    if (doc.currentGameId) throw new ApiError(409, 'This week already has a game running.');
+
+    const vote = { ...doc.vote, [seat]: choice };
+    const other = seat === 'OC' ? 'DC' : 'OC';
+    const bothIn = !!doc.seats?.[other];
+    const patch = { vote };
+
+    if (choice === 'call' || (bothIn && vote[other] === 'call')) {
+      const g = userGame(season);
+      if (g) {
+        const cfg = liveConfig(season, g);
+        const ref = gameRef(store().collection('games').doc().id);
+        await ref.set({
+          id: ref.id,
+          status: 'lobby',
+          seasonId, seasonWeek: season.week,
+          teamName: cfg.teamName, oppName: cfg.oppName,
+          rosters: cfg.rosters,
+          atHome: cfg.atHome, us: cfg.us, them: cfg.them,
+          seats: {
+            ...(doc.seats.OC ? { OC: { ...doc.seats.OC, ready: false } } : {}),
+            ...(doc.seats.DC ? { DC: { ...doc.seats.DC, ready: false } } : {}),
+          },
+          uids: doc.uids,
+          state: newGameState({ firstPossession: cfg.firstPossession }),
+          tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
+          gameplan: { OC: { aggression: 0, tempo: 'normal' }, DC: { aggression: 0, tempo: 'normal' } },
+          filmPoints: { OC: 0, DC: 0 },
+          pending: { playIndex: 0, deadline: null, prediction: null, hint: null },
+          pause: { state: 'none' },
+          chirps: [],
+          // Only one seat filled means the other unit runs itself.
+          autoSeat: doc.seats.OC && doc.seats.DC ? null : (doc.seats.OC ? 'DC' : 'OC'),
+        });
+        patch.currentGameId = ref.id;
+      }
+    } else if (vote.OC === 'sim' && (!bothIn || vote.DC === 'sim')) {
+      const simmed = simRemainingWeek(season);
+      Object.assign(patch, dehydrate(simmed), { vote: { OC: null, DC: null } });
+    } else if (!bothIn && choice === 'sim') {
+      const simmed = simRemainingWeek(season);
+      Object.assign(patch, dehydrate(simmed), { vote: { OC: null, DC: null } });
+    }
+
+    await seasonRef(seasonId).update(patch);
+    return { ok: true, started: !!patch.currentGameId };
+  },
+
+  /** Fold a finished game into the season and clear the week. */
+  async finishWeek(uid, { seasonId }) {
+    const { doc, season } = await loadSeason(seasonId, uid);
+    if (!doc.currentGameId) throw new ApiError(409, 'No game to finish.');
+    const gSnap = await gameRef(doc.currentGameId).get();
+    const game = gSnap.data();
+    if (!game || game.status !== 'final') throw new ApiError(409, 'That game is not over.');
+
+    const playsSnap = await gameRef(doc.currentGameId).collection('plays').orderBy('playIndex').get();
+    const plays = playsSnap.docs.map((d) => d.data());
+    const cfg = { gameId: doc.currentGameId, us: game.us, them: game.them, atHome: game.atHome };
+    const result = statsFromPlays(plays, game.state, cfg);
+    result.week = doc.week;
+    result.playoff = doc.phase === 'playoffs';
+
+    const withResult = { ...season, results: [...season.results, result] };
+    const closed = simRemainingWeek(withResult);
+    await seasonRef(seasonId).update({
+      ...dehydrate(closed),
+      vote: { OC: null, DC: null },
+      currentGameId: null,
+    });
+    return { ok: true };
+  },
+
+  async advanceSeason(uid, { seasonId }) {
+    const { doc, season } = await loadSeason(seasonId, uid);
+    if (doc.currentGameId) throw new ApiError(409, 'Finish this week\'s game first.');
+    const next = advanceWeek(season);
+    await seasonRef(seasonId).update({ ...dehydrate(next), vote: { OC: null, DC: null } });
+    return { week: next.week, phase: next.phase };
+  },
+
+  /* ------------------------------------------------------------ games */
 
   async createGame(uid, { seat = 'OC', displayName = 'Coordinator',
     teamName = 'Cascade', oppName = 'Ironworks' }) {
