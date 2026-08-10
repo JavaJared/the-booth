@@ -3,7 +3,8 @@ import { newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucke
 import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
 import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
-  liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS } from './shared/season.js';
+  liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
+  hydrate, dehydrate } from './shared/season.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
@@ -165,6 +166,15 @@ $('btn-join').addEventListener('click', async () => {
   try {
     const fb = await connectFirebase();
     app.name = nameVal();
+    // One box for both kinds of invitation — try a season, fall back to a game.
+    try {
+      const r = await fb.fn('joinSeason')({ seasonId: code, displayName: app.name });
+      rememberSeasonCode(code);
+      watchSeason(fb, code, r.data.seat);
+      return;
+    } catch (seasonErr) {
+      if (!/No season with that code/i.test(seasonErr.message)) throw seasonErr;
+    }
     app.t = new FirebaseTransport(fb);
     await app.t.join(code, app.name);
     rememberGame(code, app.name);
@@ -264,6 +274,70 @@ function loadSeason() {
 }
 export function clearSeason() { try { localStorage.removeItem(SAVE_KEY); } catch {} }
 
+/* One interface over a season, whether it lives in this browser or in
+   Firestore. Everything the week pane calls goes through here. */
+const link = {
+  local: true,
+  async vote(choice) {
+    if (this.local) {
+      if (choice === 'sim') { app.season = simRemainingWeek(app.season); renderSeason(); }
+      else {
+        const g = userGame(app.season);
+        if (g) startSeasonGame(liveConfig(app.season, g));
+      }
+      return;
+    }
+    await api('voteWeek', { seasonId: app.seasonId, choice });
+  },
+  async advance() {
+    if (this.local) { app.season = advanceWeek(app.season); renderSeason(); return; }
+    await api('advanceSeason', { seasonId: app.seasonId });
+  },
+  async finish() {
+    if (this.local) return;
+    await api('finishWeek', { seasonId: app.seasonId });
+  },
+};
+
+let _fb = null;
+async function api(action, data) {
+  if (!_fb) _fb = await connectFirebase();
+  return (await _fb.fn(action)(data)).data;
+}
+
+/** Follow a shared season, and the game inside it when one is running. */
+function watchSeason(fb, seasonId, seat) {
+  app.seasonId = seasonId;
+  app.seat = seat;
+  link.local = false;
+  app.inSeason = true;
+  let attached = null;
+  fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
+    const doc = snap.data();
+    if (!doc) return;
+    app.seasonDoc = doc;
+    app.season = hydrate(JSON.parse(JSON.stringify(doc)));
+
+    if (doc.currentGameId && attached !== doc.currentGameId) {
+      attached = doc.currentGameId;
+      const t = new FirebaseTransport(fb);
+      t.mySeat = seat;
+      app.t = t;
+      app.liveCfg = null;
+      t.watch(doc.currentGameId);
+      t.subscribe(render);
+      show('game');
+      return;
+    }
+    if (!doc.currentGameId) {
+      attached = null;
+      app.t = null;
+      show('season');
+      renderSeason();
+    }
+  });
+}
+
 $('btn-season').addEventListener('click', () => {
   const saved = loadSeason();
   if (saved?.season) {
@@ -286,17 +360,47 @@ function pickTeam() {
     <p>Pick the club you are joining. You and your rival share it — one calls offense, one calls defense.</p>
     <label class="form-field"><span>Club</span>
       <select id="team-pick" class="select">${opts}</select></label>
+    <label class="form-field"><span>Who else is in the booth?</span>
+      <select id="mode-pick" class="select">
+        <option value="solo">Just me — an AI runs the other unit</option>
+        <option value="rival">A rival, on their own device</option>
+      </select></label>
     <div class="modal-actions">
       <button class="btn btn-primary" data-a="OC">Coordinate the offense</button>
       <button class="btn btn-primary" data-a="DC">Coordinate the defense</button>
-    </div>`, (act) => {
+    </div>`, async (act) => {
     const team = document.getElementById('team-pick').value;
+    const shared = document.getElementById('mode-pick').value === 'rival';
     app.seat = act;
-    app.season = createSeason({ seed: Math.random().toString(36).slice(2, 10), userTeam: team });
-    closeModal();
-    saveSeason();
-    openSeason();
+    if (!shared) {
+      link.local = true;
+      app.season = createSeason({ seed: Math.random().toString(36).slice(2, 10), userTeam: team });
+      closeModal();
+      saveSeason();
+      openSeason();
+      return;
+    }
+    try {
+      const fb = await connectFirebase();
+      const r = await fb.fn('createSeason')({ seat: act, displayName: nameVal(), teamId: team });
+      closeModal();
+      rememberSeasonCode(r.data.seasonId);
+      watchSeason(fb, r.data.seasonId, r.data.seat);
+      showSeasonCode(r.data.seasonId);
+    } catch (e) { setupErr(e.message); closeModal(); }
   });
+}
+
+function rememberSeasonCode(id) {
+  try { localStorage.setItem('booth:seasonCode', JSON.stringify({ id, at: Date.now() })); } catch {}
+}
+function showSeasonCode(id) {
+  modal(`<h2>Send this to your rival</h2>
+    <p class="code" style="margin:.4rem 0 1rem">${id}</p>
+    <p>They paste it into the join box on the front page and take the other seat.
+      Nothing starts until you both weigh in on week one.</p>
+    <div class="modal-actions"><button class="btn btn-primary" data-a="ok">Got it</button></div>`,
+    () => closeModal());
 }
 
 function openSeason() {
@@ -355,17 +459,28 @@ function paneWeek(pane, S) {
          ${usScore}&ndash;${themScore}${done.played ? '' : ' <em>(staff called it)</em>'}</p>`);
     } else {
       const actions = el('div', 'matchup-actions');
-      const call = el('button', 'btn btn-primary', 'Call the game');
-      call.addEventListener('click', () => startSeasonGame(cfg));
-      const sim = el('button', 'btn', 'Let the staff handle it');
-      sim.addEventListener('click', () => {
-        app.season = simRemainingWeek(app.season);
-        renderSeason();
-      });
+      const mine = app.seasonDoc?.vote?.[app.seat] || null;
+      const call = el('button', 'btn' + (mine === 'call' ? ' btn-primary' : ''), 'Call the game');
+      call.addEventListener('click', () => link.vote('call'));
+      const sim = el('button', 'btn' + (mine === 'sim' ? ' btn-primary' : ''), 'Let the staff handle it');
+      sim.addEventListener('click', () => link.vote('sim'));
       actions.append(call, sim);
       box.append(actions);
-      box.insertAdjacentHTML('beforeend',
-        `<p class="scout-note">Your staff calls an average game. Beating average is how you build a résumé.</p>`);
+
+      if (link.local) {
+        box.insertAdjacentHTML('beforeend',
+          `<p class="scout-note">Your staff calls an average game. Beating average is how you build a résumé.</p>`);
+      } else {
+        const other = app.seat === 'OC' ? 'DC' : 'OC';
+        const rival = app.seasonDoc?.seats?.[other];
+        const theirs = app.seasonDoc?.vote?.[other] || null;
+        const line = !rival ? 'Waiting for your rival to take the other seat.'
+          : mine && !theirs ? `Waiting on ${rival.displayName}.`
+          : theirs === 'call' ? `${rival.displayName} wants to call it — so it gets called.`
+          : theirs === 'sim' ? `${rival.displayName} would rather sim. Simming needs you both.`
+          : 'Either of you can insist on calling it. Simming needs you both to agree.';
+        box.insertAdjacentHTML('beforeend', `<p class="scout-note">${line}</p>`);
+      }
     }
     pane.append(box);
   }
@@ -385,7 +500,7 @@ function paneWeek(pane, S) {
   const btn = el('button', 'btn btn-primary', S.phase === 'done' ? 'Season complete'
     : S.week >= REGULAR_WEEKS && S.phase === 'regular' ? 'Start the playoffs' : 'Advance to next week');
   btn.disabled = !ready || S.phase === 'done';
-  btn.addEventListener('click', () => { app.season = advanceWeek(app.season); renderSeason(); });
+  btn.addEventListener('click', () => link.advance());
   next.append(btn);
   if (!ready) next.append(el('p', 'scout-note', 'Play or sim your game first.'));
   pane.append(next);
@@ -1063,6 +1178,12 @@ function renderFinal(g, plays) {
       <button class="btn btn-primary" data-a="again">${app.inSeason ? 'Back to the season' : 'Run it back'}</button>
     </div>`, () => {
     if (!app.inSeason) return location.reload();
+    if (!link.local) {
+      // The server owns the season; it reads the play log itself.
+      closeModal();
+      link.finish().catch((e) => flash(e.message));
+      return;
+    }
     // Fold the result into the season in the same shape a simulated game
     // produces, then let the rest of the week play out.
     const res = statsFromPlays(plays, s, app.liveCfg);
