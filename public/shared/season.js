@@ -248,28 +248,78 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
       coaches, openings, invited,
       resumeScores: Object.fromEntries(seats.map((s) =>
         [s, Object.fromEntries(openings.map((o) => [o.teamId, resumeScore(resumes[s], o)]))])),
-      done: {},        // seat -> [teamId] already interviewed
+      banked: {},      // seat -> { teamId: { interview, resume, total } }
+      decisions: null, // filled in when the offseason resolves
       hired: null,     // { seat, teamId } once someone gets the job
     },
   };
 }
 
-/** Score one completed interview and decide whether the club hires you. */
-export function settleInterview(season, seat, teamId, answers) {
+/**
+ * Bank an interview without revealing anything. Clubs decide once both
+ * coordinators have finished their rounds, so neither of you learns your
+ * outcome before the other has sat down.
+ */
+export function recordInterview(season, seat, teamId, answers) {
   const c = season.carousel;
   const opening = c.openings.find((o) => o.teamId === teamId);
   const res = resume(season, seat);
   const iv = interviewScore(answers, opening);
-  const outcome = hire(opening, {
-    name: 'You',
-    resume: resumeScore(res, opening),
-    interview: iv,
-  }, rivalPool(season.seed, opening));
+  const rs = resumeScore(res, opening);
+  const banked = {
+    ...c.banked,
+    [seat]: { ...(c.banked[seat] || {}), [teamId]: {
+      interview: iv, resume: rs, total: +(0.55 * rs + 0.45 * iv).toFixed(1),
+    } },
+  };
+  return { ...season, carousel: { ...c, banked } };
+}
 
-  const done = { ...c.done, [seat]: [...(c.done[seat] || []), teamId] };
-  const carousel = { ...c, done, lastOutcome: { seat, teamId, ...outcome, interview: iv } };
-  if (outcome.got) carousel.hired = { seat, teamId };
-  return { ...season, carousel, phase: outcome.got ? 'hired' : 'offseason' };
+export function interviewsLeft(season, seat) {
+  const c = season.carousel;
+  const done = new Set(Object.keys(c.banked?.[seat] || {}));
+  return (c.invited[seat] || []).filter((t) => !done.has(t));
+}
+
+export const seatReady = (season, seat) => interviewsLeft(season, seat).length === 0;
+
+/**
+ * Every club decides at once. Better jobs are filled first, and a coordinator
+ * who takes one is off the board for the rest — so the two of you can be in
+ * the same room for the same job, and only one walks out with it.
+ */
+export function resolveHiring(season, seats = ['OC', 'DC']) {
+  const c = season.carousel;
+  const order = [...c.openings].sort((a, b) => {
+    const q = (o) => (season.strength[o.teamId].off - 75) + (season.strength[o.teamId].def - 74);
+    return q(b) - q(a);
+  });
+
+  const taken = new Set();
+  const decisions = [];
+  let hired = null;
+
+  for (const o of order) {
+    const field = rivalPool(season.seed, o).map((r) => ({ ...r }));
+    for (const seat of seats) {
+      if (taken.has(seat)) continue;
+      const b = c.banked?.[seat]?.[o.teamId];
+      if (b) field.push({ name: seat === 'OC' ? 'You (offense)' : 'You (defense)', seat, ...b });
+    }
+    field.sort((a, b) => b.total - a.total);
+    const winner = field[0];
+    if (winner?.seat) {
+      taken.add(winner.seat);
+      if (!hired) hired = { seat: winner.seat, teamId: o.teamId };
+    }
+    decisions.push({ teamId: o.teamId, field, hiredName: winner?.name, hiredSeat: winner?.seat || null });
+  }
+
+  return {
+    ...season,
+    phase: hired ? 'hired' : 'offseason',
+    carousel: { ...c, decisions, hired, resolved: true },
+  };
 }
 
 /** Nobody got a job. Roll the calendar forward and go again. */
