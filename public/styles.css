@@ -427,3 +427,14 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
   padding:0 .2rem;box-decoration-break:clone}
 .select{width:100%;background:var(--pad);border:1px solid var(--ink);border-radius:2px;
   padding:.5rem .55rem;font-family:var(--sans);font-size:.92rem}
+
+/* ---------- the interview ---------- */
+.iv-meta{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+  font-size:.68rem;font-weight:600;color:var(--ink-3);margin:0 0 .5rem !important}
+.iv-blurb{font-family:var(--hand);font-size:1.15rem;color:var(--pencil);
+  margin:0 0 1rem !important;line-height:1.35}
+.iv-q{font-size:1.05rem;font-weight:500;color:var(--ink) !important;margin:0 0 .85rem !important}
+.iv-options{display:grid;gap:.45rem}
+.iv-option{text-align:left;font-size:.9rem;line-height:1.4;padding:.65rem .75rem;
+  font-weight:400;white-space:normal}
+.invited{color:var(--pencil);font-weight:700}
