@@ -9,7 +9,8 @@ import { getAuth } from 'firebase-admin/auth';
 import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
 import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
-  simRemainingWeek, advanceWeek } from '../../public/shared/season.js';
+  simRemainingWeek, advanceWeek, startOffseason, recordInterview,
+  setOffseasonReady, advanceOffseason, canReady, bothReady } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 
 class ApiError extends Error {
@@ -57,6 +58,8 @@ function admin() {
 const store = () => getFirestore(admin());
 const gameRef = (id) => store().collection('games').doc(id);
 const seasonRef = (id) => store().collection('seasons').doc(id);
+
+const seatsIn = (doc) => ['OC', 'DC'].filter((s) => doc.seats?.[s]);
 
 async function loadSeason(id, uid) {
   const snap = await seasonRef(id).get();
@@ -228,9 +231,49 @@ const actions = {
   async advanceSeason(uid, { seasonId }) {
     const { doc, season } = await loadSeason(seasonId, uid);
     if (doc.currentGameId) throw new ApiError(409, 'Finish this week\'s game first.');
-    const next = advanceWeek(season);
+    // The end of the calendar opens the carousel rather than advancing a week.
+    const next = season.phase === 'done'
+      ? startOffseason(season, seatsIn(doc))
+      : advanceWeek(season);
     await seasonRef(seasonId).update({ ...dehydrate(next), vote: { OC: null, DC: null } });
     return { week: next.week, phase: next.phase };
+  },
+
+  /* ------------------------------------------------------------ offseason */
+
+  /**
+   * The client sends which options it picked, never a score. Questions are
+   * regenerated from the season seed and graded here, so a candidate cannot
+   * hand themselves a perfect interview.
+   */
+  async recordInterview(uid, { seasonId, teamId, choices }) {
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
+    if (season.phase !== 'offseason') throw new ApiError(409, 'The carousel is not open.');
+    if (season.carousel?.stage !== 'interviews') throw new ApiError(409, 'Not the interview stage yet.');
+    if (!(season.carousel.invited?.[seat] || []).includes(teamId)) {
+      throw new ApiError(403, 'That club did not ask to see you.');
+    }
+    if (season.carousel.banked?.[seat]?.[teamId]) throw new ApiError(409, 'You already sat down with them.');
+    if (!Array.isArray(choices)) bad('Send the options you picked.');
+
+    const next = recordInterview(season, seat, teamId, choices);
+    await seasonRef(seasonId).update({ carousel: next.carousel });
+    return { ok: true, remaining: (next.carousel.invited[seat] || [])
+      .filter((t) => !next.carousel.banked?.[seat]?.[t]).length };
+  },
+
+  /** Ready up. When both coordinators have, the offseason moves on. */
+  async readyOffseason(uid, { seasonId, ready = true }) {
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
+    if (season.phase !== 'offseason') throw new ApiError(409, 'The carousel is not open.');
+    if (ready && !canReady(season, seat)) {
+      throw new ApiError(409, 'You still have clubs to sit down with.');
+    }
+    const seats = seatsIn(doc);
+    let next = setOffseasonReady(season, seat, ready);
+    if (bothReady(next, seats)) next = advanceOffseason(next, seats);
+    await seasonRef(seasonId).update(dehydrate(next));
+    return { stage: next.carousel?.stage || null, phase: next.phase };
   },
 
   /* ------------------------------------------------------------ games */
