@@ -38,10 +38,15 @@ class LocalTransport {
     };
     this.mySeat = seat;
     this.emit();
+    // If the AI coordinator's unit is on the clock first, let it play until
+    // the human is actually needed.
+    if (this.game.autoSeat && seatOnClock(this.game.state) === this.game.autoSeat) {
+      await this.call({ auto: true });
+    }
     return { gameId: this.gameId, seat };
   }
-  async call({ callId, special }) {
-    const r = runToNextDecision(this.gameId, this.game, { callId, special });
+  async call({ callId, special, auto }) {
+    const r = runToNextDecision(this.gameId, this.game, { callId, special, auto });
     this.plays.push(...r.plays);
     Object.assign(this.game, {
       state: r.state, tendencies: r.tendencies, filmPoints: r.filmPoints,
@@ -146,7 +151,8 @@ $('btn-create').addEventListener('click', async () => {
     const fb = await connectFirebase();
     app.name = nameVal();
     app.t = new FirebaseTransport(fb);
-    await app.t.create({ seat: app.seat, displayName: app.name });
+    const made = await app.t.create({ seat: app.seat, displayName: app.name });
+    rememberGame(made.gameId, app.name);
     app.t.subscribe(render);
     show('lobby');
   } catch (e) { setupErr(e.message); }
@@ -161,6 +167,7 @@ $('btn-join').addEventListener('click', async () => {
     app.name = nameVal();
     app.t = new FirebaseTransport(fb);
     await app.t.join(code, app.name);
+    rememberGame(code, app.name);
     app.t.subscribe(render);
     show('lobby');
   } catch (e) { setupErr(e.message.replace(/^.*?: /, '')); }
@@ -214,6 +221,35 @@ function show(id) {
    weeks of work to an accidental reload would be unforgivable. */
 
 const SAVE_KEY = 'booth:season';
+const GAME_KEY = 'booth:game';
+
+function rememberGame(gameId, name) {
+  try { localStorage.setItem(GAME_KEY, JSON.stringify({ gameId, name, at: Date.now() })); } catch {}
+}
+function forgetGame() { try { localStorage.removeItem(GAME_KEY); } catch {} }
+
+/** Offer to walk back into a two-player game after a reload. */
+async function offerRejoin() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(GAME_KEY) || 'null'); } catch { return; }
+  if (!saved?.gameId || Date.now() - saved.at > 1000 * 60 * 60 * 24 * 3) return forgetGame();
+  modal(`<h2>Rejoin your game?</h2><p>You were in a game with a rival. Anonymous sign-in
+    keeps your seat as long as it is the same browser.</p>
+    <div class="modal-actions"><button class="btn btn-primary" data-a="yes">Rejoin</button>
+    <button class="btn" data-a="no">Not now</button></div>`, async (act) => {
+    closeModal();
+    if (act !== 'yes') return forgetGame();
+    try {
+      const fb = await connectFirebase();
+      app.name = saved.name || 'Coordinator';
+      app.t = new FirebaseTransport(fb);
+      await app.t.join(saved.gameId, app.name);
+      app.t.subscribe(render);
+      show('lobby');
+    } catch (e) { setupErr(e.message); forgetGame(); }
+  });
+}
+offerRejoin();
 
 function saveSeason() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify({ season: app.season, seat: app.seat })); }
