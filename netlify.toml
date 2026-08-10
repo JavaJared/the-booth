@@ -1,4 +1,4 @@
-# Netlify builds this for you — you never need npm on your own machine.
+# No build step: the site is plain ES modules, served as-is.
 [build]
   publish = "public"
   functions = "netlify/functions"
@@ -8,6 +8,11 @@
 
 [functions]
   node_bundler = "esbuild"
+  # firebase-admin resolves parts of itself at runtime (grpc, protobuf
+  # descriptors), which esbuild cannot follow statically. Bundling it produces
+  # a function that crashes on first call with an opaque 502. Leaving it
+  # external ships the real package instead.
+  external_node_modules = ["firebase-admin"]
 
 # Single API entry point; the action is in the POST body.
 [[redirects]]
