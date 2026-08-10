@@ -251,18 +251,35 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
       banked: {},      // seat -> { teamId: { interview, resume, total } }
       decisions: null, // filled in when the offseason resolves
       hired: null,     // { seat, teamId } once someone gets the job
+      // The offseason moves in the same rhythm as the season: nobody skips
+      // ahead while their rival is still reading.
+      stage: 'openings',
+      ready: {},
     },
   };
 }
+
+export const OFFSEASON_STAGES = ['openings', 'interviews', 'decisions'];
 
 /**
  * Bank an interview without revealing anything. Clubs decide once both
  * coordinators have finished their rounds, so neither of you learns your
  * outcome before the other has sat down.
  */
-export function recordInterview(season, seat, teamId, answers) {
+/**
+ * Takes the option indices the candidate picked, not a score. The questions are
+ * regenerated from the seed and graded here, so a client cannot award itself a
+ * perfect interview.
+ */
+export function recordInterview(season, seat, teamId, choices) {
   const c = season.carousel;
   const opening = c.openings.find((o) => o.teamId === teamId);
+  if (!opening) return season;
+  const qs = interviewQuestions(season.seed, teamId, seat);
+  const answers = qs.map((q, i) => ({
+    question: q,
+    choice: Math.max(0, Math.min(q.options.length - 1, Number(choices[i]) || 0)),
+  }));
   const res = resume(season, seat);
   const iv = interviewScore(answers, opening);
   const rs = resumeScore(res, opening);
@@ -317,9 +334,39 @@ export function resolveHiring(season, seats = ['OC', 'DC']) {
 
   return {
     ...season,
-    phase: hired ? 'hired' : 'offseason',
     carousel: { ...c, decisions, hired, resolved: true },
   };
+}
+
+/* ---- pacing: both coordinators move through the offseason together ---- */
+
+export function setOffseasonReady(season, seat, ready = true) {
+  const c = season.carousel;
+  return { ...season, carousel: { ...c, ready: { ...c.ready, [seat]: !!ready } } };
+}
+
+/** A seat can only call itself ready once it has nothing left to do. */
+export function canReady(season, seat) {
+  if (season.carousel.stage !== 'interviews') return true;
+  return interviewsLeft(season, seat).length === 0;
+}
+
+export const bothReady = (season, seats) => seats.every((s) => season.carousel.ready?.[s]);
+
+/**
+ * Move the offseason on when everyone has readied. Leaving the interview stage
+ * is where every club decides at once.
+ */
+export function advanceOffseason(season, seats = ['OC', 'DC']) {
+  if (!bothReady(season, seats)) return season;
+  const stage = season.carousel.stage;
+  const clear = (s, next) => ({ ...s, carousel: { ...s.carousel, stage: next, ready: {} } });
+
+  if (stage === 'openings') return clear(season, 'interviews');
+  if (stage === 'interviews') return clear(resolveHiring(season, seats), 'decisions');
+  // Past the decisions, either somebody is a head coach or it is next year.
+  if (season.carousel.hired) return { ...season, phase: 'hired' };
+  return nextSeason(season);
 }
 
 /** Nobody got a job. Roll the calendar forward and go again. */
