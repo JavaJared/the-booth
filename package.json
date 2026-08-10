@@ -6,6 +6,6 @@
     "balance": "node tools/balance.js 500"
   },
   "dependencies": {
-    "jsdom": "^30.0.1"
+    "firebase-admin": "^12.6.0"
   }
 }
