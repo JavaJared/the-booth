@@ -279,6 +279,12 @@ export function clearSeason() { try { localStorage.removeItem(SAVE_KEY); } catch
 
 /* One interface over a season, whether it lives in this browser or in
    Firestore. Everything the week pane calls goes through here. */
+/** Every server call goes through here, so a rejection surfaces instead of
+    disappearing into an unhandled promise. */
+function run(p) {
+  return Promise.resolve(p).catch((e) => flash(e.message || 'That did not work.'));
+}
+
 const link = {
   local: true,
   async vote(choice) {
@@ -484,9 +490,9 @@ function paneWeek(pane, S) {
       const actions = el('div', 'matchup-actions');
       const mine = app.seasonDoc?.vote?.[app.seat] || null;
       const call = el('button', 'btn' + (mine === 'call' ? ' btn-primary' : ''), 'Call the game');
-      call.addEventListener('click', () => link.vote('call'));
+      call.addEventListener('click', () => run(link.vote('call')));
       const sim = el('button', 'btn' + (mine === 'sim' ? ' btn-primary' : ''), 'Let the staff handle it');
-      sim.addEventListener('click', () => link.vote('sim'));
+      sim.addEventListener('click', () => run(link.vote('sim')));
       actions.append(call, sim);
       box.append(actions);
 
@@ -526,12 +532,14 @@ function paneWeek(pane, S) {
     : 'Advance to next week');
   btn.disabled = !ready;
   btn.addEventListener('click', () => {
-    if (S.phase === 'done') {
-      app.season = startOffseason(app.season, [app.seat]);
+    // A shared season opens the carousel on the server, or the document stays
+    // on phase 'done' while this browser shows an offseason nobody else has.
+    if (S.phase === 'done' && link.local) {
+      app.season = startOffseason(app.season, link.seats());
       renderSeason();
       return;
     }
-    link.advance();
+    run(link.advance());
   });
   next.append(btn);
   if (!ready) next.append(el('p', 'scout-note', 'Play or sim your game first.'));
@@ -617,7 +625,7 @@ function paneOffseason(pane, S) {
   };
   const b = el('button', 'btn' + (iAmReady ? '' : ' btn-primary'), iAmReady ? 'Waiting…' : labels[stage]);
   b.disabled = !canReady(S, seat) || iAmReady;
-  b.addEventListener('click', () => link.ready(true));
+  b.addEventListener('click', () => run(link.ready(true)));
   box.append(b);
 
   if (!canReady(S, seat)) {
@@ -668,7 +676,7 @@ function runInterview(opening) {
   const ask = (i) => {
     if (i >= qs.length) {
       closeModal();
-      link.interview(opening.teamId, answers).catch((e) => flash(e.message));
+      run(link.interview(opening.teamId, answers));
       return;
     }
     const q = qs[i];
@@ -1363,7 +1371,7 @@ function renderFinal(g, plays) {
     if (!link.local) {
       // The server owns the season; it reads the play log itself.
       closeModal();
-      link.finish().catch((e) => flash(e.message));
+      run(link.finish());
       return;
     }
     // Fold the result into the season in the same shape a simulated game
@@ -1392,8 +1400,17 @@ document.querySelectorAll('#tempo-row .chip').forEach((c) => c.addEventListener(
   app.t.plan('OC', { ...(g.gameplan?.OC || {}), tempo: c.dataset.tempo });
 }));
 
+/** A toast, not a chirp: the chirp column only exists on the game screen, so
+    errors raised during a season or the offseason went unseen. */
 function flash(msg) {
-  const n = el('div', 'chirp', `<b>!</b> ${msg}`);
-  $('chirps').prepend(n);
-  setTimeout(() => n.remove(), 4000);
+  let host = document.getElementById('toasts');
+  if (!host) {
+    host = el('div', 'toasts');
+    host.id = 'toasts';
+    document.body.append(host);
+  }
+  const t = el('div', 'toast', String(msg));
+  host.append(t);
+  setTimeout(() => t.classList.add('go'), 4200);
+  setTimeout(() => t.remove(), 4800);
 }
