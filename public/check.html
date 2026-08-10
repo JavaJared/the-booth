@@ -20,6 +20,10 @@
   .step code{font-family:var(--mono);font-size:.78rem;background:rgba(217,227,230,.5);
     padding:.05rem .3rem;border-radius:2px;word-break:break-all}
   .fix{margin-top:.4rem;font-family:var(--hand);font-size:1.1rem;color:var(--pencil)}
+  .raw{margin:.5rem 0 0;padding:.5rem .6rem;background:#F2F5F2;border:1px solid var(--hair);
+    border-radius:2px;font-family:var(--mono);font-size:.72rem;line-height:1.5;
+    white-space:pre-wrap;word-break:break-all;max-height:11rem;overflow:auto;color:var(--ink-2)}
+  .raw b{color:var(--ink);font-weight:700}
 </style>
 </head>
 <body>
@@ -29,6 +33,9 @@
   <p class="lede">Each layer is tested on its own, so a failure points at one thing
     to fix rather than leaving you guessing.</p>
   <div id="steps"></div>
+  <p class="scout-note" style="padding:0;margin-top:1rem">Diagnostic build 2.
+    If you do not see this line, your browser is serving a cached copy &mdash;
+    add <code>?v=2</code> to the address.</p>
   <p style="margin-top:1.5rem"><a href="/" class="btn">Back to the game</a></p>
 </div>
 
@@ -44,25 +51,92 @@ function step(title) {
       el.querySelector('p').innerHTML = msg || ''; },
     fail: (msg, fix) => { el.className = 'step fail'; el.querySelector('.mark').textContent = '✕';
       el.querySelector('p').innerHTML = msg + (fix ? `<span class="fix">${fix}</span>` : ''); },
+    // Evidence on the page, for devices where devtools are not available.
+    show: (label, text) => {
+      const pre = document.createElement('pre');
+      pre.className = 'raw';
+      pre.innerHTML = `<b>${label}</b>\n` + String(text)
+        .slice(0, 700).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      el.querySelector('div').append(pre);
+    },
   };
 }
+
+// Anything unhandled lands on the page rather than only in the console.
+addEventListener('error', (e) => {
+  const s = step('Unexpected error');
+  s.fail(e.message || String(e.error));
+});
+addEventListener('unhandledrejection', (e) => {
+  const s = step('Unexpected error');
+  s.fail(e.reason?.message || String(e.reason));
+});
 const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
 
 (async () => {
-  // 1 — config file
+  // 1 — config file. Several very different failures used to look identical
+  // here, so fetch the raw file first and name the actual problem.
   const s1 = step('firebase-config.js is present');
   let cfg;
   try {
-    cfg = (await import('./firebase-config.js')).firebaseConfig;
-    if (!cfg?.apiKey || cfg.apiKey.startsWith('...')) {
-      halt(s1, 'The file loaded but still has placeholder values.',
-        'Paste your real web config and commit it. These keys are public by design.');
+    let raw = null, status = 0, ctype = '';
+    try {
+      const res = await fetch('./firebase-config.js?v=' + Date.now(), { cache: 'no-store' });
+      status = res.status;
+      ctype = res.headers.get('content-type') || '';
+      raw = await res.text();
+    } catch (netErr) {
+      halt(s1, `Could not reach the file at all: <code>${netErr.message}</code>`,
+        'Are you offline, or is the site itself not loading?');
+    }
+    const evidence = () => s1.show(
+      `GET /firebase-config.js  →  ${status}  ${ctype.split(';')[0]}`,
+      raw && raw.trim() ? raw : '(empty response)');
+
+    if (status === 404) {
+      evidence();
+      halt(s1, 'The server returned <b>404</b> for <code>/firebase-config.js</code>.',
+        'The file is not inside the published folder. On GitHub it must sit at ' +
+        'public/firebase-config.js — check the breadcrumb above the file contents. ' +
+        'If the path is right, the deploy has not finished; wait for Netlify to publish.');
+    }
+    if (raw !== null && /<!DOCTYPE html/i.test(raw)) {
+      evidence();
+      halt(s1, 'That path returns the site&rsquo;s HTML, not JavaScript.',
+        'Netlify is falling back to index.html, which means the file is not there. Check the path.');
+    }
+    if (raw !== null && !/export\s+(const|let|var)\s+firebaseConfig/.test(raw)) {
+      const hasConst = /const\s+firebaseConfig/.test(raw);
+      evidence();
+      halt(s1, hasConst
+        ? 'The file is served, but the config is not exported.'
+        : 'The file is served, but no <code>firebaseConfig</code> declaration was found in it.',
+        hasConst
+          ? 'Firebase&rsquo;s console shows "const firebaseConfig = {...}". Add export in front: "export const firebaseConfig = {...}".'
+          : 'Paste the config object from Firebase &rarr; Project settings &rarr; Your apps, prefixed with export const firebaseConfig =');
+    }
+
+    cfg = (await import('./firebase-config.js?v=' + Date.now())).firebaseConfig;
+    if (!cfg) {
+      evidence();
+      halt(s1, 'The file loaded but exported nothing named <code>firebaseConfig</code>.',
+        'The export name must be exactly firebaseConfig.');
+    }
+    if (!cfg.apiKey || String(cfg.apiKey).startsWith('...')) {
+      halt(s1, 'The file loaded but still holds the example placeholders.',
+        'Replace them with your real values. These keys are public by design.');
+    }
+    if (!cfg.projectId) {
+      halt(s1, 'The config has no <code>projectId</code>.', 'Copy the whole object from the Firebase console.');
     }
     s1.pass(`Project <code>${cfg.projectId}</code>`);
   } catch (e) {
     if (e.message === 'stop') return;
-    halt(s1, 'Could not import <code>public/firebase-config.js</code>.',
-      'Copy firebase-config.example.js to firebase-config.js, fill it in, commit it.');
+    // A genuine parse error inside the file lands here.
+    try { evidence(); } catch {}
+    halt(s1, `The file exists but failed to load: <code>${e.message}</code>`,
+      'Usually a syntax error — a smart quote from copy-paste, a stray character, ' +
+      'or a missing comma. Open /firebase-config.js directly and read it.');
   }
 
   // 2 — SDK
