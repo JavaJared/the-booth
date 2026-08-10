@@ -33,9 +33,9 @@
   <p class="lede">Each layer is tested on its own, so a failure points at one thing
     to fix rather than leaving you guessing.</p>
   <div id="steps"></div>
-  <p class="scout-note" style="padding:0;margin-top:1rem">Diagnostic build 2.
+  <p class="scout-note" style="padding:0;margin-top:1rem">Diagnostic build 3.
     If you do not see this line, your browser is serving a cached copy &mdash;
-    add <code>?v=2</code> to the address.</p>
+    add <code>?v=3</code> to the address.</p>
   <p style="margin-top:1.5rem"><a href="/" class="btn">Back to the game</a></p>
 </div>
 
@@ -63,13 +63,15 @@ function step(title) {
 }
 
 // Anything unhandled lands on the page rather than only in the console.
+// `stop` is how halt() unwinds a failed check; it is not a real error.
+const realError = (m) => m && m !== 'stop' && !/^Error: stop$/.test(m);
 addEventListener('error', (e) => {
-  const s = step('Unexpected error');
-  s.fail(e.message || String(e.error));
+  const m = e.message || String(e.error);
+  if (realError(m)) step('Unexpected error').fail(m);
 });
 addEventListener('unhandledrejection', (e) => {
-  const s = step('Unexpected error');
-  s.fail(e.reason?.message || String(e.reason));
+  const m = e.reason?.message || String(e.reason);
+  if (realError(m)) step('Unexpected error').fail(m);
 });
 const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
 
@@ -105,6 +107,23 @@ const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
       halt(s1, 'That path returns the site&rsquo;s HTML, not JavaScript.',
         'Netlify is falling back to index.html, which means the file is not there. Check the path.');
     }
+    // The Firebase console hands you a full snippet, imports and all. Those
+    // imports use bare specifiers, which a browser cannot resolve without a
+    // bundler — so the file must hold the config object and nothing else.
+    const bare = raw && raw.match(/import\s[^;]*?from\s+['"](firebase\/[\w-]+)['"]/);
+    if (bare) {
+      evidence();
+      halt(s1, `The file contains <code>import … from "${bare[1]}"</code>, which a browser cannot resolve.`,
+        'You pasted the whole snippet from the Firebase console. Delete every import line and the ' +
+        'initializeApp / getAnalytics lines. Keep only the config object, with export in front of it. ' +
+        'app.js loads the SDK from a CDN by itself.');
+    }
+    if (raw && /initializeApp\s*\(/.test(raw)) {
+      evidence();
+      halt(s1, 'The file calls <code>initializeApp()</code>.',
+        'That belongs in app.js, not here. This file should contain only: export const firebaseConfig = { … };');
+    }
+
     if (raw !== null && !/export\s+(const|let|var)\s+firebaseConfig/.test(raw)) {
       const hasConst = /const\s+firebaseConfig/.test(raw);
       evidence();
@@ -178,26 +197,49 @@ const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'ping', data: {} }),
     });
-    const body = await res.json().catch(() => ({ error: 'Response was not JSON.' }));
-    if (res.status === 404) {
-      halt(s4, 'Netlify returned 404.',
-        'The function did not deploy. Check that netlify/functions/api.js is committed.');
-    }
-    if (res.status === 401) {
-      halt(s4, 'The function rejected the token.',
-        'FIREBASE_PROJECT_ID in Netlify must match the projectId in firebase-config.js.');
-    }
+    const text = await res.text();
+    let body = {};
+    try { body = JSON.parse(text); } catch { /* not JSON — show it raw below */ }
+
     if (!res.ok) {
-      const hint = /PEM|DECODER|private key/i.test(body.error || '')
-        ? 'FIREBASE_PRIVATE_KEY is malformed. Paste the whole key including the BEGIN and END lines.'
-        : 'Netlify → Deploys → Functions → api, for the real stack trace.';
-      halt(s4, `${res.status}: ${body.error || 'unknown'}`, hint);
+      s4.show(`POST /api  →  ${res.status}`, text.trim() || '(empty response body)');
+      const err = body.error || body.errorMessage || '';
+      if (res.status === 404) {
+        halt(s4, 'Netlify returned 404 — the function is not deployed.',
+          'Check that netlify/functions/api.js and netlify/functions/package.json are both committed, ' +
+          'and that the deploy log lists a bundled function named api.');
+      }
+      if (res.status === 401) {
+        halt(s4, 'The function rejected your sign-in token.',
+          'FIREBASE_PROJECT_ID in Netlify must match the projectId in firebase-config.js.');
+      }
+      if (/Missing environment variable/i.test(err)) {
+        halt(s4, err, 'Add them, then trigger a fresh deploy — Netlify reads them at build time.');
+      }
+      if (/PRIVATE_KEY|PEM|DECODER/i.test(err + text)) {
+        halt(s4, err || 'The private key could not be parsed.',
+          'Re-paste FIREBASE_PRIVATE_KEY whole, including the BEGIN and END lines.');
+      }
+      if (res.status === 502 || !text.trim()) {
+        halt(s4, 'The function crashed before it could answer (502).',
+          'Most often the firebase-admin bundle. Confirm netlify.toml contains ' +
+          'external_node_modules = ["firebase-admin"] under [functions], then redeploy. ' +
+          'The real stack trace is at Netlify → Deploys → your deploy → Functions → api.');
+      }
+      halt(s4, `${res.status}: ${err || 'no error message returned'}`,
+        'Netlify → Deploys → Functions → api, for the stack trace.');
     }
     ping = body.data;
-    s4.pass(`Admin credentials reached Firestore as <code>${ping.uid}</code>`);
+    s4.pass(`Admin credentials reached Firestore. Server project <code>${ping.projectId}</code>.`);
+    if (ping.projectId && ping.projectId !== cfg.projectId) {
+      s4.show('Project mismatch',
+        `browser: ${cfg.projectId}\nserver:  ${ping.projectId}\n` +
+        'These must match or reads and writes will hit different databases.');
+    }
   } catch (e) {
     if (e.message === 'stop') return;
-    halt(s4, e.message, 'If this says "Failed to fetch", the site did not deploy the function.');
+    halt(s4, e.message,
+      '"Failed to fetch" here usually means the site deployed without the function.');
   }
 
   // 5 — round trip through the real game path
