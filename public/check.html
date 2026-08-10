@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Booth — connection check</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body{padding:2rem 1.25rem}
+  .wrap{max-width:44rem;margin:0 auto}
+  h1{font-family:var(--cond);text-transform:uppercase;letter-spacing:.04em;font-size:2rem;margin:0 0 .3rem}
+  .step{background:var(--pad);border:1px solid var(--ink);border-radius:2px;
+    padding:.7rem .85rem;margin-bottom:.55rem;display:flex;gap:.8rem;align-items:flex-start}
+  .step .mark{font-family:var(--mono);font-weight:700;flex:none;width:1.6rem;text-align:center}
+  .step.pass .mark{color:#2F7D4F}
+  .step.fail .mark{color:var(--pencil)}
+  .step.run .mark{color:var(--ink-3)}
+  .step b{display:block;font-size:.95rem}
+  .step p{margin:.15rem 0 0;font-size:.83rem;color:var(--ink-2);line-height:1.45}
+  .step code{font-family:var(--mono);font-size:.78rem;background:rgba(217,227,230,.5);
+    padding:.05rem .3rem;border-radius:2px;word-break:break-all}
+  .fix{margin-top:.4rem;font-family:var(--hand);font-size:1.1rem;color:var(--pencil)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Diagnostics</p>
+  <h1>Connection check</h1>
+  <p class="lede">Each layer is tested on its own, so a failure points at one thing
+    to fix rather than leaving you guessing.</p>
+  <div id="steps"></div>
+  <p style="margin-top:1.5rem"><a href="/" class="btn">Back to the game</a></p>
+</div>
+
+<script type="module">
+const box = document.getElementById('steps');
+function step(title) {
+  const el = document.createElement('div');
+  el.className = 'step run';
+  el.innerHTML = `<span class="mark">…</span><div><b>${title}</b><p></p></div>`;
+  box.append(el);
+  return {
+    pass: (msg) => { el.className = 'step pass'; el.querySelector('.mark').textContent = '✓';
+      el.querySelector('p').innerHTML = msg || ''; },
+    fail: (msg, fix) => { el.className = 'step fail'; el.querySelector('.mark').textContent = '✕';
+      el.querySelector('p').innerHTML = msg + (fix ? `<span class="fix">${fix}</span>` : ''); },
+  };
+}
+const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
+
+(async () => {
+  // 1 — config file
+  const s1 = step('firebase-config.js is present');
+  let cfg;
+  try {
+    cfg = (await import('./firebase-config.js')).firebaseConfig;
+    if (!cfg?.apiKey || cfg.apiKey.startsWith('...')) {
+      halt(s1, 'The file loaded but still has placeholder values.',
+        'Paste your real web config and commit it. These keys are public by design.');
+    }
+    s1.pass(`Project <code>${cfg.projectId}</code>`);
+  } catch (e) {
+    if (e.message === 'stop') return;
+    halt(s1, 'Could not import <code>public/firebase-config.js</code>.',
+      'Copy firebase-config.example.js to firebase-config.js, fill it in, commit it.');
+  }
+
+  // 2 — SDK
+  const s2 = step('Firebase SDK loads from the CDN');
+  let app, auth, fs;
+  try {
+    const [a, b, c] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'),
+      import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'),
+    ]);
+    app = a.initializeApp(cfg); auth = b; fs = c;
+    s2.pass('All three modules loaded.');
+  } catch (e) {
+    if (e.message === 'stop') return;
+    halt(s2, e.message, 'Usually a network block or an ad blocker on gstatic.com.');
+  }
+
+  // 3 — anonymous auth
+  const s3 = step('Anonymous sign-in is enabled');
+  let user, token;
+  try {
+    const a = auth.getAuth(app);
+    user = (await auth.signInAnonymously(a)).user;
+    token = await user.getIdToken();
+    s3.pass(`Signed in as <code>${user.uid}</code>`);
+  } catch (e) {
+    if (e.message === 'stop') return;
+    halt(s3, `${e.code || ''} ${e.message}`,
+      'Firebase console → Authentication → Sign-in method → Anonymous → Enable.');
+  }
+
+  // 4 — the serverless function is deployed
+  const s4 = step('The /api function responds');
+  let ping;
+  try {
+    const res = await fetch('/api', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'ping', data: {} }),
+    });
+    const body = await res.json().catch(() => ({ error: 'Response was not JSON.' }));
+    if (res.status === 404) {
+      halt(s4, 'Netlify returned 404.',
+        'The function did not deploy. Check that netlify/functions/api.js is committed.');
+    }
+    if (res.status === 401) {
+      halt(s4, 'The function rejected the token.',
+        'FIREBASE_PROJECT_ID in Netlify must match the projectId in firebase-config.js.');
+    }
+    if (!res.ok) {
+      const hint = /PEM|DECODER|private key/i.test(body.error || '')
+        ? 'FIREBASE_PRIVATE_KEY is malformed. Paste the whole key including the BEGIN and END lines.'
+        : 'Netlify → Deploys → Functions → api, for the real stack trace.';
+      halt(s4, `${res.status}: ${body.error || 'unknown'}`, hint);
+    }
+    ping = body.data;
+    s4.pass(`Admin credentials reached Firestore as <code>${ping.uid}</code>`);
+  } catch (e) {
+    if (e.message === 'stop') return;
+    halt(s4, e.message, 'If this says "Failed to fetch", the site did not deploy the function.');
+  }
+
+  // 5 — round trip through the real game path
+  const s5 = step('A game can be created and read back');
+  try {
+    const res = await fetch('/api', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'createGame', data: { seat: 'DC', displayName: 'Diagnostic' } }),
+    });
+    const body = await res.json();
+    if (!res.ok) halt(s5, body.error, 'The write failed. Check the function logs.');
+    const gameId = body.data.gameId;
+
+    const db = fs.getFirestore(app);
+    const snap = await fs.getDoc(fs.doc(db, 'games', gameId));
+    if (!snap.exists()) halt(s5, 'The game was written but reads back empty.');
+    s5.pass(`Created and read game <code>${gameId}</code> seated at DC.`);
+
+    // 6 — rules actually deny what they should
+    const s6 = step('Security rules block client writes');
+    try {
+      await fs.updateDoc(fs.doc(db, 'games', gameId), { 'state.score.us': 99 });
+      s6.fail('A client just wrote to the game document.',
+        'Publish firestore.rules in the console. Right now anyone can award themselves points.');
+    } catch {
+      s6.pass('Writes are refused, as they should be.');
+    }
+  } catch (e) {
+    if (e.message === 'stop') return;
+    const s6 = step('Security rules');
+    s6.fail(e.message,
+      /permission|insufficient/i.test(e.message)
+        ? 'Reads are being denied. Publish the firestore.rules from this repo.'
+        : '');
+  }
+
+  const done = document.createElement('p');
+  done.className = 'field-note';
+  done.style.textAlign = 'left';
+  done.textContent = 'All green means two-player exhibition games will work.';
+  box.append(done);
+})();
+</script>
+</body>
+</html>
