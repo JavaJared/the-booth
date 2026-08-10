@@ -9,22 +9,50 @@ import { getAuth } from 'firebase-admin/auth';
 import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
 
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      // Netlify stores the key with literal \n sequences.
-      privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    }),
-  });
-}
-const db = getFirestore();
-const gameRef = (id) => db.collection('games').doc(id);
-
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
+
+const ENV_KEYS = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+
+/**
+ * Initialise lazily and inside the request's try/catch. Doing this at module
+ * scope meant a missing or malformed environment variable crashed the whole
+ * function before any handler ran, and Netlify returned an opaque 502 with no
+ * way to tell what was wrong.
+ */
+let _app = null;
+function admin() {
+  if (_app) return _app;
+  const missing = ENV_KEYS.filter((k) => !process.env[k]);
+  if (missing.length) {
+    throw new ApiError(500, `Missing environment variable${missing.length > 1 ? 's' : ''}: `
+      + `${missing.join(', ')}. Add them in Netlify → Site configuration → Environment `
+      + `variables, then trigger a fresh deploy (they are read at build time).`);
+  }
+  // Netlify stores the key with literal \n sequences; turn them back into newlines.
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  if (!privateKey.includes('BEGIN PRIVATE KEY')) {
+    throw new ApiError(500, 'FIREBASE_PRIVATE_KEY does not look like a key. Paste the whole '
+      + 'private_key value from the service-account JSON, including the '
+      + '-----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines.');
+  }
+  try {
+    _app = getApps().length ? getApps()[0] : initializeApp({
+      credential: cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey,
+      }),
+    });
+  } catch (e) {
+    throw new ApiError(500, `Firebase admin failed to initialise: ${e.message}`);
+  }
+  return _app;
+}
+
+const store = () => getFirestore(admin());
+const gameRef = (id) => store().collection('games').doc(id);
 const bad = (msg) => { throw new ApiError(400, msg); };
 
 function seatOf(game, uid) {
@@ -47,14 +75,18 @@ const actions = {
   /** Confirms the function is deployed, the token verified, and admin
    *  credentials actually reach Firestore. */
   async ping(uid) {
-    const probe = await db.collection('_health').doc('ping').get();
-    return { uid, firestore: true, existed: probe.exists, at: new Date().toISOString() };
+    const probe = await store().collection('_health').doc('ping').get();
+    return {
+      uid, firestore: true, existed: probe.exists,
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      at: new Date().toISOString(),
+    };
   },
 
   async createGame(uid, { seat = 'OC', displayName = 'Coordinator',
     teamName = 'Cascade', oppName = 'Ironworks' }) {
     if (!['OC', 'DC'].includes(seat)) bad('Pick OC or DC.');
-    const ref = gameRef(db.collection('games').doc().id);
+    const ref = gameRef(store().collection('games').doc().id);
     await ref.set({
       id: ref.id,
       status: 'lobby',
@@ -75,7 +107,7 @@ const actions = {
   },
 
   async joinGame(uid, { gameId, displayName = 'Coordinator' }) {
-    return db.runTransaction(async (tx) => {
+    return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const snap = await tx.get(ref);
       if (!snap.exists) throw new ApiError(404, 'No game with that code.');
@@ -93,7 +125,7 @@ const actions = {
   },
 
   async setReady(uid, { gameId, ready = true }) {
-    return db.runTransaction(async (tx) => {
+    return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
@@ -112,7 +144,7 @@ const actions = {
 
   async submitCall(uid, { gameId, playIndex, callId, special, auto }) {
     const ref = gameRef(gameId);
-    const plays = await db.runTransaction(async (tx) => {
+    const plays = await store().runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new ApiError(404, 'No such game.');
       const g = snap.data();
@@ -142,14 +174,14 @@ const actions = {
       return sim.plays;
     });
 
-    const batch = db.batch();
+    const batch = store().batch();
     for (const p of plays) batch.set(ref.collection('plays').doc(String(p.playIndex)), p);
     await batch.commit();
     return { ok: true, plays: plays.length };
   },
 
   async submitPrediction(uid, { gameId, playIndex, guess }) {
-    return db.runTransaction(async (tx) => {
+    return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
@@ -172,7 +204,7 @@ const actions = {
   },
 
   async readKeys(uid, { gameId }) {
-    return db.runTransaction(async (tx) => {
+    return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
@@ -198,7 +230,7 @@ const actions = {
   },
 
   async respondPause(uid, { gameId, accept }) {
-    return db.runTransaction(async (tx) => {
+    return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
@@ -233,7 +265,7 @@ export default async (req) => {
   try {
     const token = (req.headers.get('authorization') || '').replace(/^Bearer /, '');
     if (!token) throw new ApiError(401, 'Sign in first.');
-    const { uid } = await getAuth().verifyIdToken(token);
+    const { uid } = await getAuth(admin()).verifyIdToken(token);
 
     const { action, data = {} } = await req.json();
     const fn = actions[action];
