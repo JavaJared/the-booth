@@ -4,7 +4,9 @@ import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSucc
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
 import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
-  hydrate, dehydrate } from './shared/season.js';
+  hydrate, dehydrate, startOffseason, settleInterview, nextSeason,
+  interviewQuestions } from './shared/season.js';
+import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
@@ -422,7 +424,8 @@ function renderSeason() {
   const tab = document.querySelector('.season-tabs .tab.is-on')?.dataset.stab || 'week';
   const pane = $('season-pane');
   pane.innerHTML = '';
-  ({ week: paneWeek, standings: paneStandings, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
+  if ((S.phase === 'offseason' || S.phase === 'hired') && tab === 'week') paneOffseason(pane, S);
+  else ({ week: paneWeek, standings: paneStandings, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
   saveSeason();
 }
 
@@ -497,13 +500,123 @@ function paneWeek(pane, S) {
 
   const ready = !g || !!done;
   const next = el('div', 'season-actions');
-  const btn = el('button', 'btn btn-primary', S.phase === 'done' ? 'Season complete'
-    : S.week >= REGULAR_WEEKS && S.phase === 'regular' ? 'Start the playoffs' : 'Advance to next week');
-  btn.disabled = !ready || S.phase === 'done';
-  btn.addEventListener('click', () => link.advance());
+  const btn = el('button', 'btn btn-primary',
+    S.phase === 'done' ? 'Black Monday'
+    : S.week >= REGULAR_WEEKS && S.phase === 'regular' ? 'Start the playoffs'
+    : 'Advance to next week');
+  btn.disabled = !ready;
+  btn.addEventListener('click', () => {
+    if (S.phase === 'done') {
+      app.season = startOffseason(app.season, [app.seat]);
+      renderSeason();
+      return;
+    }
+    link.advance();
+  });
   next.append(btn);
   if (!ready) next.append(el('p', 'scout-note', 'Play or sim your game first.'));
   pane.append(next);
+}
+
+/* ---------- the offseason ---------- */
+
+function paneOffseason(pane, S) {
+  const c = S.carousel;
+
+  if (S.phase === 'hired') {
+    const t = TEAM_BY_ID[c.hired.teamId];
+    pane.append(card('You got the job',
+      `<p class="scout-note" style="font-size:1.35rem;color:var(--pencil)">
+         Head coach, ${t.city} ${t.name}.</p>
+       <p class="scout-note">Your rival is still in the booth. That is the whole game.</p>`));
+    const again = el('div', 'season-actions');
+    const b = el('button', 'btn btn-primary', 'Start a new career');
+    b.addEventListener('click', () => { clearSeason(); location.reload(); });
+    again.append(b);
+    pane.append(again);
+    return;
+  }
+
+  const seat = app.seat;
+  const invited = new Set(c.invited[seat] || []);
+  const done = new Set(c.done[seat] || []);
+  const R = resume(S, seat);
+
+  pane.append(card('Your season',
+    table(['', ''], [
+      ['Record', `${R.record.w}\u2013${R.record.l}`],
+      [seat === 'OC' ? 'Offense, points' : 'Defense, points allowed', ordinal(R.ranks.points)],
+      ['Yards per play', ordinal(R.ranks.ypp)],
+      ['Games you called yourself', `${R.gamesCalled} of ${R.gamesPlayed}`],
+    ])));
+
+  const rows = c.openings.map((o) => {
+    const fit = c.resumeScores[seat]?.[o.teamId] ?? resumeScore(R, o);
+    const status = done.has(o.teamId) ? 'Passed on you'
+      : invited.has(o.teamId) ? '<b class="invited">Interview</b>' : 'No call';
+    return [fullName(o.teamId), o.label, `${Math.round(fit)}`, status];
+  });
+  pane.append(card('Head coaching vacancies',
+    (rows.length ? table(['Club', 'Looking for', 'Fit', ''], rows)
+      : note('Every club kept its coach. Brutal year to be looking.'))
+    + noteEl('Fit is how they read your résumé. The interview is the other half.')));
+
+  const open = c.openings.filter((o) => invited.has(o.teamId) && !done.has(o.teamId));
+  if (open.length) {
+    const box = el('div', 'season-actions');
+    for (const o of open) {
+      const b = el('button', 'btn btn-primary', `Interview with ${TEAM_BY_ID[o.teamId].name}`);
+      b.addEventListener('click', () => runInterview(o));
+      box.append(b);
+    }
+    pane.append(box);
+  } else {
+    const last = c.lastOutcome;
+    if (last && !last.got) {
+      pane.append(card('They went another way',
+        `<p class="scout-note">${TEAM_BY_ID[last.teamId].city} hired
+          ${last.field[0].name}. You interviewed at ${Math.round(last.interview)}.</p>`
+        + table(['Candidate', 'Score'], last.field.slice(0, 4).map((f) =>
+            [f.you ? '<mark>You</mark>' : f.name, f.total.toFixed(1)]))));
+    }
+    const box = el('div', 'season-actions');
+    const b = el('button', 'btn btn-primary', 'Back to the booth for another year');
+    b.addEventListener('click', () => { app.season = nextSeason(app.season); renderSeason(); });
+    box.append(b, el('p', 'scout-note', 'Nobody hired you. Build a better résumé.'));
+    pane.append(box);
+  }
+}
+
+/** Five questions, one at a time. The club is described first — reading the
+ *  opening is the actual skill being tested. */
+function runInterview(opening) {
+  const qs = interviewQuestions(app.season.seed, opening.teamId);
+  const answers = [];
+  const arch = archetypeOf(opening.archetype);
+  const t = TEAM_BY_ID[opening.teamId];
+
+  const ask = (i) => {
+    if (i >= qs.length) {
+      app.season = settleInterview(app.season, app.seat, opening.teamId, answers);
+      closeModal();
+      renderSeason();
+      return;
+    }
+    const q = qs[i];
+    const opts = q.options.map((o, k) =>
+      `<button class="btn iv-option" data-a="${k}">${o.t}</button>`).join('');
+    modal(`<h2>${t.city} ${t.name}</h2>
+      <p class="iv-meta">${opening.record.w}&ndash;${opening.record.l} &middot; ${arch.label}
+        &middot; question ${i + 1} of ${qs.length}</p>
+      <p class="iv-blurb">${arch.blurb}</p>
+      <p class="iv-q">${q.q}</p>
+      <div class="iv-options">${opts}</div>`, (choice) => {
+      answers.push({ question: q, choice: Number(choice) });
+      $('veil').dataset.html = '';
+      ask(i + 1);
+    });
+  };
+  ask(0);
 }
 
 function paneStandings(pane, S) {
