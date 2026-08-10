@@ -3,7 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "balance": "node tools/balance.js 500"
+    "balance": "node tools/balance.js 500",
+    "lint": "node tools/lint-imports.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0"
