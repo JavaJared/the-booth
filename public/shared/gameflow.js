@@ -56,7 +56,10 @@ export function runToNextDecision(gameId, game, humanCall) {
   const filmPoints = { ...game.filmPoints };
   const plays = [];
   let pendingSpecial = humanCall.special || null;
-  let humanTurn = true;
+  // `auto` means even the first snap is AI-called — needed when the unit on the
+  // clock belongs to the AI coordinator, such as the opening kickoff going the
+  // other way. Without it the game stalls before the human ever sees a sheet.
+  let humanTurn = !humanCall.auto;
   let guard = 0;
   // In a solo season your counterpart is an AI coordinator, so one seat runs
   // itself. In two-player this is null and both seats belong to humans.
