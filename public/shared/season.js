@@ -24,6 +24,7 @@ export function createSeason({ seed, userTeam, year = 2026 }) {
  * (Once free agency exists, rosters stop being derivable and must be stored.)
  */
 export function hydrate(saved) {
+  saved = { ...saved, results: dedupeResults(saved.results || []) };
   if (saved.rosters && saved.schedule) return saved;
   const ids = TEAMS.map((t) => t.id);
   const rosters = makeLeagueRosters(saved.seed, ids);
@@ -39,6 +40,24 @@ export function hydrate(saved) {
 export function dehydrate(season) {
   const { schedule, rosters, strength, ...core } = season;
   return core;
+}
+
+/**
+ * One result per scheduled game, first write wins. A duplicate would be counted
+ * twice by the standings while only one of them showed in the week pane, which
+ * is exactly the kind of drift nobody notices until the record is wrong.
+ */
+export function dedupeResults(results) {
+  // Keyed on the matchup rather than the id, so a season already carrying a
+  // duplicate from the old doc-id bug heals itself the next time it loads.
+  // A game you called outranks one your staff simulated.
+  const byKey = new Map();
+  for (const r of results) {
+    const key = `${r.playoff ? 'po' : ''}${r.week}:${r.home}:${r.away}`;
+    const held = byKey.get(key);
+    if (!held || (r.played && !held.played)) byKey.set(key, r);
+  }
+  return [...byKey.values()];
 }
 
 export const resultFor = (season, gameId) => season.results.find((r) => r.id === gameId);
@@ -134,7 +153,7 @@ export function simRemainingWeek(season, week = season.week) {
     week,
     playoff: season.phase === 'playoffs',
   }));
-  return { ...season, results: [...season.results, ...fresh] };
+  return { ...season, results: dedupeResults([...season.results, ...fresh]) };
 }
 
 /** Close the week out and move the calendar forward. */
