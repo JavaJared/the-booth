@@ -8,6 +8,9 @@ import { getAuth } from 'firebase-admin/auth';
 
 import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
+import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
+  simRemainingWeek, advanceWeek } from '../../public/shared/season.js';
+import { TEAM_BY_ID } from '../../public/shared/league.js';
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
