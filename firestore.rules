@@ -1,23 +1,31 @@
 rules_version = '2';
-// Clients read their own game and nothing else. Every write goes through a
-// Cloud Function, because a client that can write game state can write itself
-// a touchdown.
+// Clients read only what they are seated in, and never write. A client that can
+// write game state can write itself a touchdown, so every mutation goes through
+// the serverless API using admin credentials.
+//
+// Membership is a `uids` array rather than a check against seats.OC.uid: a game
+// starts with only one seat filled, and reading a missing field is an error in
+// rules, which would silently deny the creator access to their own game.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    match /seasons/{seasonId} {
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.uids;
+      allow write: if false;
+    }
+
     match /games/{gameId} {
-      allow read: if request.auth != null && (
-        resource.data.seats.OC.uid == request.auth.uid ||
-        resource.data.seats.DC.uid == request.auth.uid
-      );
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.uids;
       allow write: if false;
 
       match /plays/{playId} {
-        allow read: if request.auth != null && (
-          get(/databases/$(database)/documents/games/$(gameId)).data.seats.OC.uid == request.auth.uid ||
-          get(/databases/$(database)/documents/games/$(gameId)).data.seats.DC.uid == request.auth.uid
-        );
+        allow read: if request.auth != null
+                    && request.auth.uid in get(/databases/$(database)/documents/games/$(gameId)).data.uids;
         allow write: if false;
       }
     }
   }
 }
+
