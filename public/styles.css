@@ -443,3 +443,11 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
   font-size:clamp(1.4rem,5vw,2rem);font-weight:700;color:#2F7D4F;
   margin:.6rem 0 .4rem;padding:0 .6rem}
 .verdict-big.lost{color:var(--pencil)}
+
+/* errors have to be visible on every screen, not just the booth */
+.toasts{position:fixed;left:50%;bottom:1.2rem;transform:translateX(-50%);z-index:80;
+  display:grid;gap:.4rem;width:min(30rem,calc(100% - 2rem));pointer-events:none}
+.toast{background:var(--board);color:var(--led-white);border-left:3px solid var(--led-hot);
+  border-radius:2px;padding:.6rem .8rem;font-size:.88rem;line-height:1.4;
+  box-shadow:0 8px 24px -14px rgba(12,16,20,.8);transition:opacity .5s,transform .5s}
+.toast.go{opacity:0;transform:translateY(6px)}
