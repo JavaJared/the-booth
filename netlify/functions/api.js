@@ -201,10 +201,19 @@ const actions = {
 
     const playsSnap = await gameRef(doc.currentGameId).collection('plays').orderBy('playIndex').get();
     const plays = playsSnap.docs.map((d) => d.data());
-    const cfg = { gameId: doc.currentGameId, us: game.us, them: game.them, atHome: game.atHome };
+
+    // The result must carry the SCHEDULE's id, not the Firestore document id.
+    // Everything downstream — the week pane, simRemainingWeek, the standings —
+    // matches games by schedule id. Using the doc id meant a played game was
+    // never recognised as finished, so the week was simulated a second time and
+    // the team was credited with two results.
+    const sched = userGame(season);
+    if (!sched) throw new ApiError(409, 'No scheduled game for this week.');
+    const cfg = { gameId: sched.id, us: game.us, them: game.them, atHome: game.atHome };
     const result = statsFromPlays(plays, game.state, cfg);
     result.week = doc.week;
     result.playoff = doc.phase === 'playoffs';
+    result.gameDocId = doc.currentGameId;
 
     const withResult = { ...season, results: [...season.results, result] };
     const closed = simRemainingWeek(withResult);
