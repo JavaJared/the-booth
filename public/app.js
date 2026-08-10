@@ -4,8 +4,8 @@ import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSucc
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
 import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
-  hydrate, dehydrate, startOffseason, settleInterview, nextSeason,
-  interviewQuestions } from './shared/season.js';
+  hydrate, dehydrate, startOffseason, recordInterview, resolveHiring, interviewsLeft,
+  seatReady, nextSeason, interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
@@ -522,13 +522,14 @@ function paneWeek(pane, S) {
 
 function paneOffseason(pane, S) {
   const c = S.carousel;
+  const seat = app.seat;
 
-  if (S.phase === 'hired') {
+  if (S.phase === 'hired' && c.hired?.seat === seat) {
     const t = TEAM_BY_ID[c.hired.teamId];
     pane.append(card('You got the job',
-      `<p class="scout-note" style="font-size:1.35rem;color:var(--pencil)">
-         Head coach, ${t.city} ${t.name}.</p>
-       <p class="scout-note">Your rival is still in the booth. That is the whole game.</p>`));
+      `<p class="verdict-big">Head coach, ${t.city} ${t.name}.</p>
+       <p class="scout-note">Your rival is still in the booth. That was the whole game.</p>`));
+    pane.append(decisionsCard(S));
     const again = el('div', 'season-actions');
     const b = el('button', 'btn btn-primary', 'Start a new career');
     b.addEventListener('click', () => { clearSeason(); location.reload(); });
@@ -536,68 +537,102 @@ function paneOffseason(pane, S) {
     pane.append(again);
     return;
   }
+  if (S.phase === 'hired') {
+    const t = TEAM_BY_ID[c.hired.teamId];
+    pane.append(card('Your rival got out',
+      `<p class="verdict-big lost">${t.city} hired your rival.</p>
+       <p class="scout-note">You are still a coordinator. That is the game.</p>`));
+    pane.append(decisionsCard(S));
+    return;
+  }
 
-  const seat = app.seat;
-  const invited = new Set(c.invited[seat] || []);
-  const done = new Set(c.done[seat] || []);
   const R = resume(S, seat);
+  pane.append(card('Your season', table(['', ''], [
+    ['Record', `${R.record.w}\u2013${R.record.l}`],
+    [seat === 'OC' ? 'Offense, points' : 'Defense, points allowed', ordinal(R.ranks.points)],
+    ['Yards per play', ordinal(R.ranks.ypp)],
+    ['Games you called yourself', `${R.gamesCalled} of ${R.gamesPlayed}`],
+  ])));
 
-  pane.append(card('Your season',
-    table(['', ''], [
-      ['Record', `${R.record.w}\u2013${R.record.l}`],
-      [seat === 'OC' ? 'Offense, points' : 'Defense, points allowed', ordinal(R.ranks.points)],
-      ['Yards per play', ordinal(R.ranks.ypp)],
-      ['Games you called yourself', `${R.gamesCalled} of ${R.gamesPlayed}`],
-    ])));
+  if (c.resolved) {
+    pane.append(card('Nobody hired you', `<p class="scout-note">The jobs went elsewhere.</p>`));
+    pane.append(decisionsCard(S));
+    const box = el('div', 'season-actions');
+    const b = el('button', 'btn btn-primary', 'Back to the booth for another year');
+    b.addEventListener('click', () => { app.season = nextSeason(app.season); renderSeason(); });
+    box.append(b);
+    pane.append(box);
+    return;
+  }
 
+  const invited = new Set(c.invited[seat] || []);
+  const banked = c.banked?.[seat] || {};
   const rows = c.openings.map((o) => {
-    const fit = c.resumeScores[seat]?.[o.teamId] ?? resumeScore(R, o);
-    const status = done.has(o.teamId) ? 'Passed on you'
-      : invited.has(o.teamId) ? '<b class="invited">Interview</b>' : 'No call';
+    const fit = c.resumeScores[seat]?.[o.teamId] ?? 0;
+    const status = banked[o.teamId] ? 'Interviewed'
+      : invited.has(o.teamId) ? '<b class="invited">Wants to talk</b>' : 'No call';
     return [fullName(o.teamId), o.label, `${Math.round(fit)}`, status];
   });
   pane.append(card('Head coaching vacancies',
     (rows.length ? table(['Club', 'Looking for', 'Fit', ''], rows)
       : note('Every club kept its coach. Brutal year to be looking.'))
-    + noteEl('Fit is how they read your résumé. The interview is the other half.')));
+    + noteEl('Fit is how they read your r\u00e9sum\u00e9. The interview is the other half.')));
 
-  const open = c.openings.filter((o) => invited.has(o.teamId) && !done.has(o.teamId));
-  if (open.length) {
+  const left = interviewsLeft(S, seat);
+  if (left.length) {
     const box = el('div', 'season-actions');
-    for (const o of open) {
-      const b = el('button', 'btn btn-primary', `Interview with ${TEAM_BY_ID[o.teamId].name}`);
+    for (const id of left) {
+      const o = c.openings.find((x) => x.teamId === id);
+      const b = el('button', 'btn btn-primary', `Interview with ${TEAM_BY_ID[id].name}`);
       b.addEventListener('click', () => runInterview(o));
       box.append(b);
     }
+    box.append(el('p', 'scout-note', 'Nobody decides anything until you have sat down with all of them.'));
     pane.append(box);
-  } else {
-    const last = c.lastOutcome;
-    if (last && !last.got) {
-      pane.append(card('They went another way',
-        `<p class="scout-note">${TEAM_BY_ID[last.teamId].city} hired
-          ${last.field[0].name}. You interviewed at ${Math.round(last.interview)}.</p>`
-        + table(['Candidate', 'Score'], last.field.slice(0, 4).map((f) =>
-            [f.you ? '<mark>You</mark>' : f.name, f.total.toFixed(1)]))));
-    }
-    const box = el('div', 'season-actions');
-    const b = el('button', 'btn btn-primary', 'Back to the booth for another year');
-    b.addEventListener('click', () => { app.season = nextSeason(app.season); renderSeason(); });
-    box.append(b, el('p', 'scout-note', 'Nobody hired you. Build a better résumé.'));
-    pane.append(box);
+    return;
   }
+
+  // Everything banked. Clubs decide when the calendar moves.
+  const box = el('div', 'season-actions');
+  const label = Object.keys(banked).length ? 'Hear back from the clubs' : 'Nothing to wait for';
+  const b = el('button', 'btn btn-primary', label);
+  b.addEventListener('click', () => {
+    app.season = resolveHiring(app.season, link.local ? [seat] : ['OC', 'DC']);
+    renderSeason();
+  });
+  box.append(b);
+  if (!link.local) {
+    const other = seat === 'OC' ? 'DC' : 'OC';
+    const rivalDone = seatReady(S, other);
+    box.append(el('p', 'scout-note', rivalDone
+      ? 'Your rival has finished theirs too.'
+      : 'Your rival is still interviewing. Clubs decide once you both have.'));
+    b.disabled = !rivalDone;
+  }
+  pane.append(box);
+}
+
+/** What every club decided, in one place. */
+function decisionsCard(S) {
+  const rows = (S.carousel.decisions || []).map((d) => [
+    fullName(d.teamId),
+    d.hiredSeat ? `<mark>${d.hiredName}</mark>` : d.hiredName || '\u2014',
+  ]);
+  return card('How the jobs went', rows.length ? table(['Club', 'Hired'], rows)
+    : note('No vacancies this year.'));
 }
 
 /** Five questions, one at a time. The club is described first — reading the
  *  opening is the actual skill being tested. */
 function runInterview(opening) {
-  const qs = interviewQuestions(app.season.seed, opening.teamId);
+  const qs = interviewQuestions(app.season.seed, opening.teamId, app.seat);
   const answers = [];
   const arch = archetypeOf(opening.archetype);
   const t = TEAM_BY_ID[opening.teamId];
 
   const ask = (i) => {
     if (i >= qs.length) {
-      app.season = settleInterview(app.season, app.seat, opening.teamId, answers);
+      app.season = recordInterview(app.season, app.seat, opening.teamId, answers);
       closeModal();
       renderSeason();
       return;
