@@ -8,6 +8,8 @@ import { makeLeagueRosters, teamStrength } from './roster.js';
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
+import { makeCoaches, firings, openingFor, resumeScore, invitesFor,
+  interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
 
 export const REGULAR_WEEKS = 18;
 const ROUND_NAMES = { 19: 'Wild Card', 20: 'Divisional', 21: 'Conference Championship', 22: 'The Final' };
@@ -224,6 +226,63 @@ function advancePlayoffs(season) {
   }
   return { ...season, week: next, playoffs: { ...p, alive: survivors, games } };
 }
+
+/* ------------------------------------------------------------ offseason */
+
+/** Black Monday: work out who was fired and who wants to talk to you. */
+export function startOffseason(season, seats = ['OC', 'DC']) {
+  const coaches = makeCoaches(season.seed);
+  const openings = firings(season, coaches).map((t) => openingFor(t, season, coaches));
+  const resumes = Object.fromEntries(seats.map((s) => [s, resume(season, s)]));
+
+  const invited = {};
+  for (const seat of seats) {
+    invited[seat] = openings
+      .filter((o) => invitesFor(o, [{ id: seat, resume: resumes[seat] }], season.seed).length)
+      .map((o) => o.teamId);
+  }
+  return {
+    ...season,
+    phase: 'offseason',
+    carousel: {
+      coaches, openings, invited,
+      resumeScores: Object.fromEntries(seats.map((s) =>
+        [s, Object.fromEntries(openings.map((o) => [o.teamId, resumeScore(resumes[s], o)]))])),
+      done: {},        // seat -> [teamId] already interviewed
+      hired: null,     // { seat, teamId } once someone gets the job
+    },
+  };
+}
+
+/** Score one completed interview and decide whether the club hires you. */
+export function settleInterview(season, seat, teamId, answers) {
+  const c = season.carousel;
+  const opening = c.openings.find((o) => o.teamId === teamId);
+  const res = resume(season, seat);
+  const iv = interviewScore(answers, opening);
+  const outcome = hire(opening, {
+    name: 'You',
+    resume: resumeScore(res, opening),
+    interview: iv,
+  }, rivalPool(season.seed, opening));
+
+  const done = { ...c.done, [seat]: [...(c.done[seat] || []), teamId] };
+  const carousel = { ...c, done, lastOutcome: { seat, teamId, ...outcome, interview: iv } };
+  if (outcome.got) carousel.hired = { seat, teamId };
+  return { ...season, carousel, phase: outcome.got ? 'hired' : 'offseason' };
+}
+
+/** Nobody got a job. Roll the calendar forward and go again. */
+export function nextSeason(season) {
+  const fresh = createSeason({
+    seed: `${season.seed}-${season.year + 1}`,
+    userTeam: season.userTeam,
+    year: season.year + 1,
+  });
+  return { ...fresh, careerYears: (season.careerYears || 1) + 1 };
+}
+
+export { interviewQuestions };
 
 /* ------------------------------------------------------------ the résumé */
 
