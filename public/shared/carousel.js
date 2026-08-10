@@ -172,25 +172,12 @@ export function resumeScore(res, opening) {
 
 /* ---------------------------------------------------------------- interview */
 
-export const QUESTIONS = [
-  { id: 'fourth', q: 'Fourth and two at midfield, down four, eight minutes left. What is the call?',
-    options: [
-      { t: 'We go. The numbers say go and I want the room to know we play to win.',
-        s: { aggression: 1.0, authority: 0.4, identity: 0.3 } },
-      { t: 'Punt, pin them deep, trust the defense to get it back.',
-        s: { patience: 0.7, collaboration: 0.4, identity: 0.3 } },
-      { t: 'Depends who is healthy. If we can get two yards on the ground, we go.',
-        s: { adaptability: 1.0, accountability: 0.3, aggression: 0.4 } },
-    ] },
-  { id: 'qb', q: 'Our quarterback is twenty-three and had a rough year. What is your first move with him?',
-    options: [
-      { t: 'Build the whole offense around what he already does well and let him grow into the rest.',
-        s: { development: 1.0, patience: 0.8, adaptability: 0.5 } },
-      { t: 'Open the job. Competition tells you more about a young player than coaching does.',
-        s: { authority: 0.9, accountability: 0.4, aggression: 0.4 } },
-      { t: 'Fix the environment first — protection, run game, play-action. Quarterbacks look bad in bad structures.',
-        s: { identity: 0.8, development: 0.6, collaboration: 0.4 } },
-    ] },
+/* Three banks. Every candidate answers leadership questions; the football
+   questions depend on which side of the ball you actually coach. Pools are
+   deliberately larger than an interview needs, so two clubs ask you different
+   things and you cannot memorise one answer key. */
+
+export const SHARED_QUESTIONS = [
   { id: 'staff', q: 'How do you build your staff?',
     options: [
       { t: 'Experienced coordinators I can argue with. I want people who will tell me I am wrong.',
@@ -208,15 +195,6 @@ export const QUESTIONS = [
         s: { identity: 1.0, authority: 0.5, patience: 0.4 } },
       { t: 'That what is not working is getting cut this week. All of it.',
         s: { adaptability: 1.0, aggression: 0.5, authority: 0.4 } },
-    ] },
-  { id: 'identity', q: 'What is this team going to look like when it is right?',
-    options: [
-      { t: 'Physical. We run it, we stop the run, we win the fourth quarter.',
-        s: { identity: 1.0, authority: 0.5, accountability: 0.3 } },
-      { t: 'Fast and aggressive. We push tempo and we take shots.',
-        s: { aggression: 1.0, identity: 0.6 } },
-      { t: 'Whatever this roster is best at. I would rather win ugly than lose on principle.',
-        s: { adaptability: 1.0, collaboration: 0.4, development: 0.3 } },
     ] },
   { id: 'gm', q: 'How much say should the general manager have over the roster?',
     options: [
@@ -245,17 +223,207 @@ export const QUESTIONS = [
       { t: 'Nobody can watch us and not know exactly what we are trying to do.',
         s: { identity: 1.0, accountability: 0.4 } },
     ] },
+  { id: 'address', q: 'First team meeting. What is the message?',
+    options: [
+      { t: 'Here are the rules, here are the consequences, and they start now.',
+        s: { authority: 1.0, accountability: 0.6 } },
+      { t: 'Here is what we are going to be great at, and how each of you fits into it.',
+        s: { identity: 0.9, development: 0.5, collaboration: 0.4 } },
+      { t: 'I mostly listen. I want to know what has been wrong in here before I start talking.',
+        s: { collaboration: 1.0, adaptability: 0.6, patience: 0.5 } },
+    ] },
+  { id: 'analytics', q: 'What does your analytics department do for you?',
+    options: [
+      { t: 'They set my fourth-down card and I follow it. That is what it is for.',
+        s: { aggression: 1.0, adaptability: 0.5 } },
+      { t: 'They inform. The call still comes from what I am seeing on the field.',
+        s: { authority: 0.7, identity: 0.6, adaptability: 0.3 } },
+      { t: 'Mostly self-scouting. I want to know what we are tipping before an opponent does.',
+        s: { accountability: 0.8, adaptability: 0.8, collaboration: 0.4 } },
+    ] },
+  { id: 'media', q: 'A reporter asks why you benched a popular veteran.',
+    options: [
+      { t: 'I say it was my decision and I do not discuss individual players publicly.',
+        s: { authority: 0.9, accountability: 0.5 } },
+      { t: 'I explain the standard he did not meet. The room already knows anyway.',
+        s: { accountability: 1.0, identity: 0.4 } },
+      { t: 'I say he is working through something and I expect him back. Then I go tell him that first.',
+        s: { collaboration: 0.9, development: 0.5, patience: 0.4 } },
+    ] },
+  { id: 'practice', q: 'How do you run a Wednesday in November?',
+    options: [
+      { t: 'Padded and physical. You cannot play a way you never practise.',
+        s: { identity: 0.9, authority: 0.6 } },
+      { t: 'Legs first. I would rather be fresh in December than right in October.',
+        s: { patience: 0.9, adaptability: 0.5, collaboration: 0.3 } },
+      { t: 'Depends on the week and the age of the roster. I ask the strength staff.',
+        s: { collaboration: 0.8, adaptability: 0.8, development: 0.4 } },
+    ] },
+  { id: 'captains', q: 'How do you pick captains?',
+    options: [
+      { t: 'The players vote. It means nothing if it comes from me.',
+        s: { collaboration: 1.0, accountability: 0.4 } },
+      { t: 'I appoint them. Leadership is a job, not a popularity contest.',
+        s: { authority: 1.0, identity: 0.4 } },
+      { t: 'I do not name any until midseason. Let me see who they actually follow.',
+        s: { patience: 0.8, adaptability: 0.7, development: 0.4 } },
+    ] },
 ];
 
-/** Five questions per interview, stable for a given opening. */
-export function interviewQuestions(seed, teamId) {
-  const rng = mulberry32(hashSeed(`${seed}:iv:${teamId}`));
-  const pool = [...QUESTIONS];
-  for (let i = pool.length - 1; i > 0; i--) {
+export const OFFENSE_QUESTIONS = [
+  { id: 'fourth', q: 'Fourth and two at midfield, down four, eight minutes left. What is the call?',
+    options: [
+      { t: 'We go. The numbers say go and I want the room to know we play to win.',
+        s: { aggression: 1.0, authority: 0.4, identity: 0.3 } },
+      { t: 'Punt, pin them deep, trust the defense to get it back.',
+        s: { patience: 0.7, collaboration: 0.4, identity: 0.3 } },
+      { t: 'Depends who is healthy. If we can get two yards on the ground, we go.',
+        s: { adaptability: 1.0, accountability: 0.3, aggression: 0.4 } },
+    ] },
+  { id: 'qb', q: 'Our quarterback is twenty-three and had a rough year. What is your first move with him?',
+    options: [
+      { t: 'Build the whole offense around what he already does well and let him grow into the rest.',
+        s: { development: 1.0, patience: 0.8, adaptability: 0.5 } },
+      { t: 'Open the job. Competition tells you more about a young player than coaching does.',
+        s: { authority: 0.9, accountability: 0.4, aggression: 0.4 } },
+      { t: 'Fix the environment first — protection, run game, play-action. Quarterbacks look bad in bad structures.',
+        s: { identity: 0.8, development: 0.6, collaboration: 0.4 } },
+    ] },
+  { id: 'offid', q: 'What does this offense look like when it is right?',
+    options: [
+      { t: 'Physical. We run it, we control the clock, we win the fourth quarter.',
+        s: { identity: 1.0, authority: 0.5, accountability: 0.3 } },
+      { t: 'Fast. We push tempo, we spread you out, we take our shots.',
+        s: { aggression: 1.0, identity: 0.6 } },
+      { t: 'Whatever this roster is best at. I would rather win ugly than lose on principle.',
+        s: { adaptability: 1.0, collaboration: 0.4, development: 0.3 } },
+    ] },
+  { id: 'redzone', q: 'You are settling for field goals. What changes?',
+    options: [
+      { t: 'We get heavier and run it in. Down there it is a will problem.',
+        s: { identity: 0.9, authority: 0.6 } },
+      { t: 'We throw it on early downs. The field is short, so take the shot before they load up.',
+        s: { aggression: 1.0, adaptability: 0.4 } },
+      { t: 'We look at who is actually getting open down there and build around him.',
+        s: { adaptability: 0.8, development: 0.6, collaboration: 0.5 } },
+    ] },
+  { id: 'oline', q: 'Your line is the weakest unit on the roster. How do you coach around it?',
+    options: [
+      { t: 'Quick game and movement. Get the ball out before it matters.',
+        s: { adaptability: 1.0, aggression: 0.3 } },
+      { t: 'Keep tight ends and backs in. I am not asking a young quarterback to survive.',
+        s: { patience: 0.8, development: 0.6, collaboration: 0.3 } },
+      { t: 'We run at them anyway. You do not fix a line by hiding it.',
+        s: { identity: 1.0, authority: 0.6, accountability: 0.4 } },
+    ] },
+  { id: 'skill', q: 'You have one genuinely elite skill player. How do you use him?',
+    options: [
+      { t: 'Move him everywhere. Make them declare how they are handling him.',
+        s: { adaptability: 0.9, aggression: 0.6 } },
+      { t: 'Feed him. Twenty-five touches and let the rest sort itself out.',
+        s: { aggression: 0.8, identity: 0.6, authority: 0.4 } },
+      { t: 'Use him to create space for everyone else. The attention is worth more than the targets.',
+        s: { collaboration: 0.8, development: 0.6, identity: 0.4 } },
+    ] },
+  { id: 'tempo', q: 'Two-minute before halftime, ball on your own twenty, one timeout.',
+    options: [
+      { t: 'We go. Points before the half swing games.',
+        s: { aggression: 1.0, authority: 0.4 } },
+      { t: 'We run it out. Nothing good happens backed up with one timeout.',
+        s: { patience: 0.9, identity: 0.4 } },
+      { t: 'Two first downs and then we decide. Let the situation tell us.',
+        s: { adaptability: 1.0, collaboration: 0.4 } },
+    ] },
+];
+
+export const DEFENSE_QUESTIONS = [
+  { id: 'pressure', q: 'How do you get to the quarterback?',
+    options: [
+      { t: 'We bring people. Pressure changes what a quarterback sees before the snap.',
+        s: { aggression: 1.0, authority: 0.4, identity: 0.4 } },
+      { t: 'Four men. If I have to blitz to be good, my front is not good enough.',
+        s: { identity: 1.0, patience: 0.4, development: 0.3 } },
+      { t: 'Depends on the week. Some quarterbacks you rattle, some you make hold the ball.',
+        s: { adaptability: 1.0, collaboration: 0.4 } },
+    ] },
+  { id: 'coverage', q: 'What is your base coverage philosophy?',
+    options: [
+      { t: 'Man. Ask your corners to cover and find out fast who can.',
+        s: { aggression: 0.9, authority: 0.6, accountability: 0.4 } },
+      { t: 'Zone with a plan. Keep it in front, tackle well, make them earn twelve plays.',
+        s: { patience: 0.9, identity: 0.6 } },
+      { t: 'Whatever this secondary can execute cleanly. A simple call run right beats a good call run wrong.',
+        s: { adaptability: 1.0, development: 0.6, collaboration: 0.4 } },
+    ] },
+  { id: 'runfit', q: 'You are getting gashed on the ground. Monday morning, what is the fix?',
+    options: [
+      { t: 'More bodies in the box and we live with it on the back end.',
+        s: { aggression: 0.8, authority: 0.6, identity: 0.4 } },
+      { t: 'It is fits and tackling, not numbers. We fix it in practice, not on the call sheet.',
+        s: { accountability: 1.0, development: 0.6, patience: 0.4 } },
+      { t: 'We change personnel. If a linebacker cannot take on a guard he cannot play for me.',
+        s: { authority: 0.9, accountability: 0.5, aggression: 0.4 } },
+    ] },
+  { id: 'takeaway', q: 'Takeaways or points allowed — which number do you live by?',
+    options: [
+      { t: 'Takeaways. I will trade a few big plays for the chances they create.',
+        s: { aggression: 1.0, identity: 0.5 } },
+      { t: 'Points. Bend, do not break, and make them drive it eighty every time.',
+        s: { patience: 1.0, accountability: 0.5 } },
+      { t: 'Whichever one the offense needs that week. We serve the team, not a stat.',
+        s: { collaboration: 1.0, adaptability: 0.7 } },
+    ] },
+  { id: 'thirddown', q: 'Third and seven. What is your default?',
+    options: [
+      { t: 'Simulated pressure. Show them heat, drop out, take the throw away.',
+        s: { adaptability: 1.0, aggression: 0.5 } },
+      { t: 'Send an extra man and make him beat it hot.',
+        s: { aggression: 1.0, authority: 0.4 } },
+      { t: 'Rush four, play the sticks, tackle at six.',
+        s: { identity: 0.9, patience: 0.6 } },
+    ] },
+  { id: 'youngdb', q: 'You have a rookie corner getting picked on every week.',
+    options: [
+      { t: 'He plays. He learns in games or he never learns.',
+        s: { development: 0.8, authority: 0.7, accountability: 0.4 } },
+      { t: 'Help him with a safety until he earns the trust to be alone.',
+        s: { patience: 0.9, development: 0.7, collaboration: 0.4 } },
+      { t: 'He sits until he is ready. I am not sacrificing games to teach one player.',
+        s: { authority: 0.9, aggression: 0.4, identity: 0.4 } },
+    ] },
+  { id: 'goalline', q: 'They have first and goal from the four.',
+    options: [
+      { t: 'Load the box, dare them to throw it, win with bodies.',
+        s: { identity: 0.9, authority: 0.5 } },
+      { t: 'Play the pass. Down there the throw beats you, not the run.',
+        s: { adaptability: 0.9, patience: 0.5 } },
+      { t: 'Bring pressure. Make the read hard in a small space.',
+        s: { aggression: 1.0, identity: 0.4 } },
+    ] },
+];
+
+/** Every question, for tooling that wants the whole bank. */
+export const QUESTIONS = [...SHARED_QUESTIONS, ...OFFENSE_QUESTIONS, ...DEFENSE_QUESTIONS];
+
+const pick = (pool, n, rng) => {
+  const a = [...pool];
+  for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+    [a[i], a[j]] = [a[j], a[i]];
   }
-  return pool.slice(0, 5);
+  return a.slice(0, n);
+};
+
+/**
+ * Six questions: three about leading a building, three about the side of the
+ * ball you actually coach. Stable for a given club and seat, different between
+ * clubs, and different for the two coordinators interviewing at the same club.
+ */
+export function interviewQuestions(seed, teamId, seat = 'OC') {
+  const rng = mulberry32(hashSeed(`${seed}:iv:${teamId}:${seat}`));
+  const football = seat === 'DC' ? DEFENSE_QUESTIONS : OFFENSE_QUESTIONS;
+  const out = [...pick(SHARED_QUESTIONS, 3, rng), ...pick(football, 3, rng)];
+  return pick(out, out.length, rng);   // interleave the two kinds
 }
 
 /** 0–100 against what this particular owner is listening for. */
