@@ -438,3 +438,8 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
 .iv-option{text-align:left;font-size:.9rem;line-height:1.4;padding:.65rem .75rem;
   font-weight:400;white-space:normal}
 .invited{color:var(--pencil);font-weight:700}
+
+.verdict-big{font-family:var(--cond);text-transform:uppercase;letter-spacing:.02em;
+  font-size:clamp(1.4rem,5vw,2rem);font-weight:700;color:#2F7D4F;
+  margin:.6rem 0 .4rem;padding:0 .6rem}
+.verdict-big.lost{color:var(--pencil)}
