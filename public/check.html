@@ -33,9 +33,9 @@
   <p class="lede">Each layer is tested on its own, so a failure points at one thing
     to fix rather than leaving you guessing.</p>
   <div id="steps"></div>
-  <p class="scout-note" style="padding:0;margin-top:1rem">Diagnostic build 3.
+  <p class="scout-note" style="padding:0;margin-top:1rem">Diagnostic build 4.
     If you do not see this line, your browser is serving a cached copy &mdash;
-    add <code>?v=3</code> to the address.</p>
+    add <code>?v=4</code> to the address.</p>
   <p style="margin-top:1.5rem"><a href="/" class="btn">Back to the game</a></p>
 </div>
 
@@ -219,6 +219,13 @@ const halt = (s, msg, fix) => { s.fail(msg, fix); throw new Error('stop'); };
       if (/PRIVATE_KEY|PEM|DECODER/i.test(err + text)) {
         halt(s4, err || 'The private key could not be parsed.',
           'Re-paste FIREBASE_PRIVATE_KEY whole, including the BEGIN and END lines.');
+      }
+      if (/Cannot find package|ERR_MODULE_NOT_FOUND|Cannot find module/i.test(text)) {
+        const pkg = (text.match(/Cannot find (?:package|module) '([^']+)'/) || [])[1] || 'a dependency';
+        halt(s4, `The function could not load <code>${pkg}</code> — it was never installed.`,
+          'Netlify installs dependencies from the package.json at the repo ROOT, not the one inside ' +
+          'netlify/functions. Add "firebase-admin": "^12.6.0" to the dependencies of the root ' +
+          'package.json, commit, and redeploy. The deploy log should then show it being installed.');
       }
       if (res.status === 502 || !text.trim()) {
         halt(s4, 'The function crashed before it could answer (502).',
