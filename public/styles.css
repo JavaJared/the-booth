@@ -464,7 +464,7 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
 .dz-los{stroke:var(--ink);stroke-width:.3}
 .dz-yard{fill:var(--ink-3);font-family:var(--cond);font-size:1.5px;text-anchor:end}
 .dz-spot{fill:var(--pad);stroke:var(--ink);stroke-width:.3;cursor:pointer}
-.dz-spot.on{fill:var(--pencil);stroke:var(--pencil)}
+.dz-spot.on{stroke:var(--pencil);stroke-width:.75}
 .dz-spot.has{fill:var(--ink)}
 .dz-label{fill:var(--ink);font-family:var(--cond);font-size:1.5px;text-anchor:middle;
   pointer-events:none;font-weight:600}
@@ -492,3 +492,5 @@ polygon.dz-zone{fill:var(--los);stroke:none}
 .dz-zonearea{fill:rgba(62,123,196,.13);stroke:var(--los);stroke-width:.12;stroke-dasharray:.7 .5}
 .dz-block{fill:var(--ink-3)}
 .dz-blockbar{stroke:var(--ink);stroke-width:.45;stroke-linecap:round}
+.dz-carrier{fill:var(--pencil);stroke:var(--pencil)}
+.dz-ball{fill:none;stroke:var(--pencil);stroke-width:.3;stroke-dasharray:.9 .6}
