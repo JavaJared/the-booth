@@ -178,6 +178,15 @@ export function registerCustomPlays(list = []) {
   }
 }
 export const customPlays = () => OFFENSE.filter((p) => p.custom);
+
+export function registerCustomDefenses(list = []) {
+  for (const d of list) {
+    if (!d?.id) continue;
+    if (!DEF_BY_ID[d.id]) DEFENSE.push(d);
+    DEF_BY_ID[d.id] = d;
+  }
+}
+export const customDefenses = () => DEFENSE.filter((d) => d.custom);
 export const DEF_BY_ID = Object.fromEntries(DEFENSE.map((p) => [p.id, p]));
 
 // Personnel mismatch: offense heavy vs defense light helps the run, and
