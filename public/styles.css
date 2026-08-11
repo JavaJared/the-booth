@@ -451,3 +451,33 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
   border-radius:2px;padding:.6rem .8rem;font-size:.88rem;line-height:1.4;
   box-shadow:0 8px 24px -14px rgba(12,16,20,.8);transition:opacity .5s,transform .5s}
 .toast.go{opacity:0;transform:translateY(6px)}
+
+/* ---------- play designer ---------- */
+.dz-wrap{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:1.4rem;
+  max-width:70rem;margin:0 auto;padding:1.2rem clamp(.7rem,2vw,1.1rem) 3rem;align-items:start}
+.dz-controls{display:grid;grid-template-columns:1fr 1fr auto;gap:.8rem;align-items:end;margin-bottom:.5rem}
+.dz-check{display:flex;align-items:center;gap:.4rem;font-size:.85rem;padding-bottom:.5rem}
+.dz-hint{font-family:var(--hand);font-size:1.1rem;color:var(--pencil);margin:.2rem 0 .6rem}
+.dz-field{display:block;width:100%;height:auto;background:var(--pad);
+  border:1px solid var(--ink);border-radius:2px}
+.dz-grid{stroke:var(--hair);stroke-width:.12}
+.dz-los{stroke:var(--ink);stroke-width:.3}
+.dz-yard{fill:var(--ink-3);font-family:var(--cond);font-size:1.5px;text-anchor:end}
+.dz-spot{fill:var(--pad);stroke:var(--ink);stroke-width:.3;cursor:pointer}
+.dz-spot.on{fill:var(--pencil);stroke:var(--pencil)}
+.dz-spot.has{fill:var(--ink)}
+.dz-label{fill:var(--ink);font-family:var(--cond);font-size:1.5px;text-anchor:middle;
+  pointer-events:none;font-weight:600}
+.dz-spot.on ~ .dz-label{fill:var(--pencil)}
+.dz-route{fill:none;stroke:var(--ink);stroke-width:.35;stroke-linejoin:round;stroke-linecap:round}
+.dz-route.on{stroke:var(--pencil);stroke-width:.5}
+.dz-arrow{fill:var(--ink)}
+.dz-arrow.on{fill:var(--pencil)}
+.dz-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.7rem}
+.dz-actions .btn-primary{margin-left:auto}
+.dz-read h4{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+  font-size:.63rem;font-weight:600;color:var(--ink-3);margin:.9rem 0 .3rem}
+.dz-tag{font-family:var(--cond);text-transform:uppercase;letter-spacing:.06em;
+  font-size:1.05rem;font-weight:700;color:var(--pencil);margin:0}
+.dz-bad{color:var(--pencil);font-family:var(--hand);font-size:1.05rem;margin:.4rem 0 0}
+@media (max-width:820px){ .dz-wrap{grid-template-columns:1fr} .dz-controls{grid-template-columns:1fr} }
