@@ -494,3 +494,7 @@ polygon.dz-zone{fill:var(--los);stroke:none}
 .dz-blockbar{stroke:var(--ink);stroke-width:.45;stroke-linecap:round}
 .dz-carrier{fill:var(--pencil);stroke:var(--pencil)}
 .dz-ball{fill:none;stroke:var(--pencil);stroke-width:.3;stroke-dasharray:.9 .6}
+.tug{height:.7rem;background:var(--hair);border-radius:2px;overflow:hidden;margin:.6rem}
+.tug-me{display:block;height:100%;background:var(--pencil);transition:width .3s}
+.lobby-actions{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;padding:.6rem}
+.lobby-actions .scout-note{padding:0}
