@@ -312,7 +312,10 @@ export function readRun(design) {
   const targets = [];
   for (const [spot, pts] of Object.entries(blocks)) {
     if (!pts || pts.length < 2) continue;
-    const from = OL_SPOTS[spot] || pts[0];
+    // Only linemen count toward the scheme read. A receiver blocking on the
+    // perimeter is not a pulling guard, however far he travels.
+    if (!(spot in OL_SPOTS)) continue;
+    const from = OL_SPOTS[spot];
     const to = pts[pts.length - 1];
     const lateral = to[0] - from[0];
     targets.push(to);
