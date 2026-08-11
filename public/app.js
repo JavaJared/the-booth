@@ -713,6 +713,22 @@ const link = {
     }
     await api('recordInterview', { seasonId: app.seasonId, teamId, choices });
   },
+  async scoutLook(prospectId) {
+    if (this.local) { app.season = useScout(app.season, app.seat, prospectId); renderSeason(); return; }
+    await api('useScout', { seasonId: app.seasonId, prospectId });
+  },
+  async lobbySide() {
+    if (this.local) { app.season = pushSide(app.season, app.seat, 1); renderSeason(); return; }
+    await api('pushSide', { seasonId: app.seasonId, amount: 1 });
+  },
+  async lobbyPlayer(prospectId) {
+    if (this.local) { app.season = pushPlayer(app.season, app.seat, prospectId); renderSeason(); return; }
+    await api('pushPlayer', { seasonId: app.seasonId, prospectId });
+  },
+  async sign(faId) {
+    if (this.local) { app.season = signFreeAgent(app.season, app.seat, faId); renderSeason(); return; }
+    await api('signFreeAgent', { seasonId: app.seasonId, faId });
+  },
   async ready(ready = true) {
     if (this.local) {
       let next = setOffseasonReady(app.season, app.seat, ready);
@@ -1017,7 +1033,8 @@ function paneOffseason(pane, S) {
     if (missed.length) {
       pane.append(card('He passed on', table(['', 'You had him at'], missed.map((p) => {
         const v = scoutView(p);
-        return [`${p.pos} ${p.name}`, `${v.floor}\u2013${v.ceiling}`];
+        return [`${p.pos} ${p.name}`,
+          `${v.floor}\u2013${v.ceiling}${p.revealed ? ` &middot; really ${p.revealed}` : ''}`];
       })) + noteEl('You made the case. He went another way.')));
     }
     const fa = S.signed?.[seat];
@@ -1083,20 +1100,24 @@ function paneScouting(pane, S, seat) {
   const pb = el('button', 'btn btn-primary',
     `Make the case for ${seat === 'OC' ? 'offense' : 'defense'}`);
   pb.disabled = inf < 1;
-  pb.addEventListener('click', () => { app.season = pushSide(app.season, seat, 1); renderSeason(); });
+  pb.addEventListener('click', () => run(link.lobbySide()));
   push.append(pb, el('p', 'scout-note', `${inf} influence left. Pounding the table for one player costs two.`));
   bar.append(push);
   pane.append(bar);
 
-  const board = (S.board || []).filter((p) => p.side === side).slice(0, 24);
+  // Always render from the published view. In a shared season the true ratings
+  // are not in this document at all.
+  const view = S.boardView?.[seat] || {};
+  const board = (S.boardPublic || S.board || []).filter((p) => p.side === side).slice(0, 24);
+  const scoutedCount = (id) => (S.board || []).find((x) => x.id === id)?.scouted;
   const rows = board.map((p) => {
-    const v = scoutView(p);
+    const v = view[p.id] || scoutView(p);
     const on = pounded.includes(p.id);
     return [
       `${on ? '<mark>' : ''}${p.pos} ${p.name}${on ? '</mark>' : ''}`,
       `${v.floor}\u2013${v.ceiling}`,
       v.confidence === 'high' ? 'sure' : v.confidence === 'some' ? 'partial' : '\u2014',
-      `<button class="btn btn-tiny" data-scout="${p.id}"${left <= 0 || p.scouted >= 3 ? ' disabled' : ''}>Look</button>`
+      `<button class="btn btn-tiny" data-scout="${p.id}"${left <= 0 || v.confidence === 'high' ? ' disabled' : ''}>Look</button>`
       + ` <button class="btn btn-tiny" data-table="${p.id}"${!on && inf < 2 ? ' disabled' : ''}>${on ? 'Back off' : 'Pound the table'}</button>`,
     ];
   });
@@ -1114,13 +1135,13 @@ function paneScouting(pane, S, seat) {
       + noteEl('Their tape is public, so the rating is real. The risk is what age does next.')));
 
   pane.querySelectorAll('[data-scout]').forEach((b) => b.addEventListener('click', () => {
-    app.season = useScout(app.season, seat, b.dataset.scout); renderSeason();
+    run(link.scoutLook(b.dataset.scout));
   }));
   pane.querySelectorAll('[data-table]').forEach((b) => b.addEventListener('click', () => {
-    app.season = pushPlayer(app.season, seat, b.dataset.table); renderSeason();
+    run(link.lobbyPlayer(b.dataset.table));
   }));
   pane.querySelectorAll('[data-sign]').forEach((b) => b.addEventListener('click', () => {
-    app.season = signFreeAgent(app.season, seat, b.dataset.sign); renderSeason();
+    run(link.sign(b.dataset.sign));
   }));
 }
 
