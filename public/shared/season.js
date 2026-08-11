@@ -8,7 +8,7 @@ import { makeLeagueRosters, teamStrength } from './roster.js';
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
-import { registerCustomPlays } from './playbook.js';
+import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
 import { makeCoaches, firings, openingFor, resumeScore, invitesFor,
   interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
 
@@ -18,7 +18,7 @@ export const weekLabel = (w) => (w <= REGULAR_WEEKS ? `Week ${w}` : ROUND_NAMES[
 
 export function createSeason({ seed, userTeam, year = 2026 }) {
   return hydrate({ seed, year, userTeam, week: 1, phase: 'regular',
-    results: [], playoffs: null, customPlays: [] });
+    results: [], playoffs: null, customPlays: [], customDefenses: [] });
 }
 
 /**
@@ -30,6 +30,7 @@ export function createSeason({ seed, userTeam, year = 2026 }) {
 export function hydrate(saved) {
   saved = { ...saved, results: dedupeResults(saved.results || []) };
   registerCustomPlays(saved.customPlays || []);
+  registerCustomDefenses(saved.customDefenses || []);
   if (saved.rosters && saved.schedule) return saved;
   const ids = TEAMS.map((t) => t.id);
   const rosters = makeLeagueRosters(saved.seed, ids);
