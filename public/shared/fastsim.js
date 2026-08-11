@@ -22,6 +22,41 @@ function gauss(rng, mean, sd) {
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 /**
+ * Football scores are assembled out of touchdowns, field goals and the rare
+ * safety — they are not a continuous quantity. Rounding a gaussian produces
+ * finals like 1-0, which cannot happen, and 4-0, which never has. This takes
+ * the model's target and expresses it as a combination that could actually
+ * appear on a scoreboard.
+ */
+function composeScore(target, rng) {
+  let t = Math.max(0, target);
+  // Being held scoreless is genuinely rare — even a bad offence usually gets
+  // one drive into range. Without this the model shuts teams out three times
+  // as often as real football does.
+  if (t < 2 && rng() < 0.68) t = 2 + rng() * 4;
+
+  // Touchdowns carry about three quarters of scoring in a real game, so the
+  // split is chosen to land near the target without drifting field-goal heavy.
+  let best = null;
+  for (let td = 0; td <= 9; td++) {
+    for (let fg = 0; fg <= 7; fg++) {
+      const err = Math.abs(td * 7 + fg * 3 - t) + Math.abs(td * 7 - t * 0.74) * 0.16;
+      if (!best || err < best.err) best = { td, fg, err };
+    }
+  }
+
+  let points = best.fg * 3;
+  for (let i = 0; i < best.td; i++) {
+    const r = rng();
+    // Extra points miss about six percent of the time, and a two-point try is
+    // worth eight when it works and six when it does not.
+    points += r < 0.080 ? 6 : r < 0.115 ? 8 : 7;
+  }
+  if (rng() < 0.011) points += 2;   // safety
+  return points;
+}
+
+/**
  * One side of the ball. `edge` is this offense's strength minus the opposing
  * defense's, in rating points.
  */
@@ -40,7 +75,8 @@ function unit(rawEdge, rng, extra = 0) {
   // small direct talent term is red-zone finishing, which yardage misses;
   // without it season records compress to everyone going 8-9.
   const raw = (yards / 100) * 5.0 + third * 14 - turnovers * 3.3 + edge * 0.66 + extra;
-  const points = Math.max(0, Math.round(clamp(gauss(rng, raw, 7.6), 0, 62)));
+  const target = clamp(gauss(rng, raw, 7.6), 0, 62);
+  const points = composeScore(target, rng);
 
   const rushShare = clamp(gauss(rng, 0.36, 0.09), 0.15, 0.62);
   return {
