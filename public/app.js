@@ -254,7 +254,7 @@ function show(id) {
    panel updates as you draw, so you can see a concept form. */
 
 const DZ = { mode: 'pass', pers: '11', sel: null, routes: {}, pa: false,
-  carrier: [], blocks: {}, blockers: [], dpos: {}, paths: {}, man: false };
+  carrier: [], carrierSpot: 'RB1', blocks: {}, blockers: [], dpos: {}, paths: {}, man: false };
 const DZ_W = 60, DZ_H = 46, DZ_LOS = 34;          // viewBox units
 const fx = (x) => 3 + (x / FIELD_W) * (DZ_W - 6);  // field x -> svg x
 const fy = (y) => DZ_LOS - y * 0.95;               // yards downfield -> svg y
@@ -275,8 +275,8 @@ function openDesigner() {
     `<button class="tab${k === DZ.mode ? ' is-on' : ''}" data-mode="${k}">${l}</button>`).join('');
   $('dz-modes').querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
     DZ.mode = t.dataset.mode;
-    DZ.sel = null; DZ.routes = {}; DZ.carrier = []; DZ.blocks = {};
-    DZ.blockers = []; DZ.paths = {};
+    DZ.sel = null; DZ.routes = {}; DZ.carrier = []; DZ.carrierSpot = 'RB1';
+    DZ.blocks = {}; DZ.blockers = []; DZ.paths = {};
     openDesigner();
   }));
   $('dz-pers').closest('.dz-controls').querySelectorAll('.dz-check')
@@ -285,7 +285,7 @@ function openDesigner() {
   $('dz-pers').closest('.form-field').hidden = DZ.mode === 'def';
   $('dz-hint').textContent = {
     pass: 'Pick a receiver, then click downfield to draw his route. Click him again to keep him in to block.',
-    run: 'Draw where the ball carrier goes, then send each lineman to his block.',
+    run: 'The circled player has the ball. Draw his path, then send everyone else to a block. Click a back or receiver twice to hand him the ball instead.',
     def: 'Pick a defender, then draw where he goes. Across the line is a blitz; anywhere behind it is his zone.',
   }[DZ.mode];
   const sel = $('dz-pers');
@@ -307,8 +307,11 @@ function drawDesigner() {
     if (y > 0) p.push(`<text x="${DZ_W - 2.5}" y="${fy(y) + 0.5}" class="dz-yard">${y}</text>`);
   }
 
+  // In run mode everyone owns their own path; only the designated carrier
+  // writes to DZ.carrier. Treating every skill player as the ball carrier
+  // meant drawing for a receiver silently edited whoever went before him.
   const paths = DZ.mode === 'run'
-    ? { ...DZ.blocks, ...(DZ.carrier.length > 1 ? { [DZ.carrierSpot || 'RB1']: DZ.carrier } : {}) }
+    ? { ...DZ.blocks, ...(DZ.carrier.length > 1 ? { [DZ.carrierSpot]: DZ.carrier } : {}) }
     : DZ.routes;
   for (const [spot, pos] of Object.entries(spots)) {
     const pts = paths[spot];
@@ -326,40 +329,52 @@ function drawDesigner() {
     }
   }
   for (const [spot, pos] of Object.entries(spots)) {
-    const blocking = DZ.mode === 'pass' && (DZ.blockers || []).includes(spot);
-    const cls = DZ.sel === spot ? 'dz-spot on'
-      : blocking ? 'dz-spot dz-block'
-      : (paths[spot]?.length > 1 ? 'dz-spot has' : 'dz-spot');
+    const carrying = DZ.mode === 'run' && spot === DZ.carrierSpot;
+    const blocking = DZ.mode === 'pass' && DZ.blockers.includes(spot);
+    // Role decides the fill; selection is a ring on top. Letting selection own
+    // the fill hid whether a player was carrying or blocking.
+    const cls = ['dz-spot',
+      carrying ? 'dz-carrier' : blocking ? 'dz-block' : (paths[spot]?.length > 1 ? 'has' : ''),
+      DZ.sel === spot ? 'on' : ''].filter(Boolean).join(' ');
     p.push(`<circle cx="${fx(pos[0])}" cy="${fy(pos[1])}" r="1.5" class="${cls}" data-spot="${spot}"/>`);
     if (blocking) p.push(`<line x1="${fx(pos[0]) - 1.6}" y1="${fy(pos[1]) - 2.2}" x2="${fx(pos[0]) + 1.6}" y2="${fy(pos[1]) - 2.2}" class="dz-blockbar"/>`);
+    if (carrying) p.push(`<circle cx="${fx(pos[0])}" cy="${fy(pos[1])}" r="2.4" class="dz-ball"/>`);
     p.push(`<text x="${fx(pos[0])}" y="${fy(pos[1]) + 3.6}" class="dz-label">${spot}</text>`);
   }
   p.push('</svg>');
   $('dz-field').innerHTML = p.join('');
 
   const svg = $('dz-field').querySelector('svg');
+  // null means "this is the ball carrier"; anything else is its own bucket.
   const store = (spot) => {
     if (DZ.mode !== 'run') return DZ.routes;
-    return (spot in OL_SPOTS) ? DZ.blocks : null;   // null means the carrier
+    return spot === DZ.carrierSpot ? null : DZ.blocks;
   };
   svg.querySelectorAll('.dz-spot').forEach((c) => c.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (DZ.mode === 'pass' && DZ.sel === c.dataset.spot && !(DZ.routes[c.dataset.spot]?.length > 1)) {
+    const spot = c.dataset.spot;
+    if (DZ.mode === 'pass' && DZ.sel === spot && !(DZ.routes[spot]?.length > 1)) {
       // Selected, no route drawn, clicked again: he stays in to block.
-      DZ.blockers = DZ.blockers || [];
-      DZ.blockers = DZ.blockers.includes(DZ.sel)
-        ? DZ.blockers.filter((x) => x !== DZ.sel) : [...DZ.blockers, DZ.sel];
+      DZ.blockers = DZ.blockers.includes(spot)
+        ? DZ.blockers.filter((x) => x !== spot) : [...DZ.blockers, spot];
       return drawDesigner();
     }
-    DZ.sel = c.dataset.spot;
-    if (DZ.mode === 'pass') DZ.blockers = (DZ.blockers || []).filter((x) => x !== DZ.sel);
-    if (DZ.mode === 'run' && !(DZ.sel in OL_SPOTS)) {
-      DZ.carrierSpot = DZ.sel;
-      if (DZ.carrier.length < 1) DZ.carrier = [spots[DZ.sel]];
-    } else {
-      const box = store(DZ.sel) || DZ.routes;
-      if (!box[DZ.sel]) box[DZ.sel] = [spots[DZ.sel]];
+    if (DZ.mode === 'run' && DZ.sel === spot && !(spot in OL_SPOTS) && spot !== DZ.carrierSpot) {
+      // Clicking a selected back or receiver again hands him the ball. Swap the
+      // two players' paths so neither loses what was already drawn.
+      const old = DZ.carrierSpot;
+      const his = DZ.blocks[spot] || [spots[spot]];
+      if (DZ.carrier.length > 1) DZ.blocks[old] = DZ.carrier; else delete DZ.blocks[old];
+      delete DZ.blocks[spot];
+      DZ.carrierSpot = spot;
+      DZ.carrier = his;
+      return drawDesigner();
     }
+    DZ.sel = spot;
+    if (DZ.mode === 'pass') DZ.blockers = DZ.blockers.filter((x) => x !== spot);
+    const box = store(spot);
+    if (box === null) { if (DZ.carrier.length < 1) DZ.carrier = [spots[spot]]; }
+    else if (!box[spot]) box[spot] = [spots[spot]];
     drawDesigner();
   }));
   svg.addEventListener('click', (e) => {
@@ -372,11 +387,9 @@ function drawDesigner() {
     const r = svg.getBoundingClientRect();
     const pt = [+ux(((e.clientX - r.left) / r.width) * DZ_W).toFixed(1),
                 +uy(((e.clientY - r.top) / r.height) * DZ_H).toFixed(1)];
-    if (DZ.mode === 'run' && !(DZ.sel in OL_SPOTS)) DZ.carrier = [...DZ.carrier, pt];
-    else {
-      const box = store(DZ.sel) || DZ.routes;
-      box[DZ.sel] = [...(box[DZ.sel] || [spots[DZ.sel]]), pt];
-    }
+    const box = store(DZ.sel);
+    if (box === null) DZ.carrier = [...(DZ.carrier.length ? DZ.carrier : [spots[DZ.sel]]), pt];
+    else box[DZ.sel] = [...(box[DZ.sel] || [spots[DZ.sel]]), pt];
     drawDesigner();
   });
 
@@ -412,9 +425,9 @@ function drawDefense() {
     }
   }
   for (const [spot, q] of Object.entries(pos)) {
-    const cls = DZ.sel === spot ? 'dz-spot on'
-      : rushing.has(spot) ? 'dz-spot dz-rusher'
-      : DZ.paths[spot]?.length > 1 ? 'dz-spot has' : 'dz-spot';
+    const cls = ['dz-spot',
+      rushing.has(spot) ? 'dz-rusher' : DZ.paths[spot]?.length > 1 ? 'has' : '',
+      DZ.sel === spot ? 'on' : ''].filter(Boolean).join(' ');
     p.push(`<circle cx="${fx(q[0])}" cy="${fy(q[1])}" r="1.5" class="${cls}" data-spot="${spot}"/>`);
     p.push(`<text x="${fx(q[0])}" y="${fy(q[1]) + 3.6}" class="dz-label">${spot}</text>`);
   }
@@ -549,7 +562,7 @@ $('dz-pers').addEventListener('change', (e) => { DZ.pers = e.target.value; DZ.ro
 $('dz-pa').addEventListener('change', (e) => { DZ.pa = e.target.checked; readDesigner(); });
 $('dz-name').addEventListener('input', readDesigner);
 const activePaths = () => DZ.mode === 'def' ? DZ.paths
-  : DZ.mode === 'run' ? ((DZ.sel in OL_SPOTS) ? DZ.blocks : null) : DZ.routes;
+  : DZ.mode === 'run' ? (DZ.sel === DZ.carrierSpot ? null : DZ.blocks) : DZ.routes;
 $('dz-undo').addEventListener('click', () => {
   const box = activePaths();
   if (box === null) { if (DZ.carrier.length > 1) DZ.carrier.pop(); }
@@ -574,7 +587,8 @@ $('dz-save').addEventListener('click', () => {
       app.season = { ...app.season, customPlays: [...(app.season.customPlays || []), play] };
       saveSeason();
     }
-    DZ.carrier = []; DZ.blocks = {}; DZ.sel = null; $('dz-name').value = '';
+    DZ.carrier = []; DZ.blocks = {}; DZ.sel = null; DZ.carrierSpot = 'RB1';
+    $('dz-name').value = '';
     flash(`${play.name} installed \u2014 ${play.tag}.`);
     return drawDesigner();
   }
