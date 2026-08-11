@@ -10,7 +10,7 @@ import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
 import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, gmPick, addToRoster, ageRoster,
-  scout, ROUNDS, SCOUT_POINTS, INFLUENCE } from './draft.js';
+  scout, scoutView, ROUNDS, SCOUT_POINTS, INFLUENCE } from './draft.js';
 import { makeCoaches, firings, openingFor, resumeScore, invitesFor,
   interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
 
@@ -383,15 +383,39 @@ export function advanceOffseason(season, seats = ['OC', 'DC']) {
 
 /* ------------------------------------------------- scouting and the draft */
 
-export function openScouting(season) {
+/**
+ * What each coordinator is allowed to know. True ratings never leave the
+ * server: the class is generated from a secret seed, and clients receive only
+ * the range their own scouting has earned. Deriving the class from the public
+ * season seed would let anyone regenerate it and read the answers.
+ */
+export function boardViews(board, seats = ['OC', 'DC']) {
+  const pub = board.map((p) => ({
+    id: p.id, name: p.name, pos: p.pos, side: p.side, age: p.age, buzz: p.buzz,
+  }));
+  const views = {};
+  for (const seat of seats) {
+    const mine = seat === 'OC' ? 'offense' : 'defense';
+    views[seat] = Object.fromEntries(board.map((p) => [p.id,
+      // You only get a read on your own side of the ball.
+      p.side === mine ? scoutView(p) : scoutView({ ...p, scouted: 0 })]));
+  }
+  return { boardPublic: pub, boardView: views };
+}
+
+export function openScouting(season, secret = null) {
   const used = new Set();
   for (const r of Object.values(season.rosters)) {
     for (const p of [...r.offense, ...r.defense]) used.add(p.name);
   }
+  const draftSeed = secret || season.seed;
+  const board = makeClass(draftSeed, season.year, used);
   return {
     ...season,
-    board: makeClass(season.seed, season.year, used),
-    freeAgents: makeFreeAgents(season.seed, season.year, used),
+    draftSeed: secret ? undefined : draftSeed,   // omitted when it must stay secret
+    board,
+    ...boardViews(board),
+    freeAgents: makeFreeAgents(draftSeed, season.year, used),
     scoutLeft: { OC: SCOUT_POINTS, DC: SCOUT_POINTS },
     influence: { OC: INFLUENCE, DC: INFLUENCE },
     lobby: { OC: 0, DC: 0, table: {} },
@@ -405,8 +429,12 @@ export function useScout(season, seat, prospectId) {
   if (left <= 0) return season;
   const before = season.board;
   const board = scout(before, prospectId, seat);
-  if (board === before || board.every((p, i) => p.scouted === before[i].scouted)) return season;
-  return { ...season, board, scoutLeft: { ...season.scoutLeft, [seat]: left - 1 } };
+  if (board.every((p, i) => p.scouted === before[i].scouted)) return season;
+  return {
+    ...season, board,
+    ...boardViews(board),
+    scoutLeft: { ...season.scoutLeft, [seat]: left - 1 },
+  };
 }
 
 /** Sign one veteran, per coordinator, for their own unit. */
@@ -459,7 +487,10 @@ export function runDraft(season, seats = ['OC', 'DC']) {
     .filter((id) => !mine.some((m) => m.id === id))
     .map((id) => (season.board || []).find((p) => p.id === id))
     .filter(Boolean);
-  return { ...season, rosters, draftResult: mine, missedTargets: missed, board: available };
+  // Once the picks are in, the truth is safe to show — that is the whole payoff.
+  return { ...season, rosters, draftResult: mine,
+    missedTargets: missed.map((p) => ({ ...p, revealed: p.rating })),
+    board: available, ...boardViews(available) };
 }
 
 /**
@@ -479,7 +510,7 @@ export function pushSide(season, seat, amount = 1) {
 /** Pound the table for one prospect. Costs more, moves him further. */
 export function pushPlayer(season, seat, prospectId) {
   const side = seat === 'OC' ? 'offense' : 'defense';
-  const p = (season.board || []).find((x) => x.id === prospectId);
+  const p = (season.boardPublic || season.board || []).find((x) => x.id === prospectId);
   if (!p || p.side !== side) return season;
   const table = { ...(season.lobby?.table || {}) };
   const mine = table[seat] || [];
