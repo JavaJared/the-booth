@@ -5,9 +5,11 @@ import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
 import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
+  useScout, pushSide, pushPlayer, signFreeAgent,
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
   interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
+import { scoutView } from './shared/draft.js';
 import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute,
   OL_SPOTS, runSpots, DEF_ALIGN, deriveRun, deriveDefense, readRun, readDefense } from './shared/designer.js';
 import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.js';
@@ -1001,6 +1003,25 @@ function paneOffseason(pane, S) {
       }
       pane.append(box);
     }
+  } else if (stage === 'scouting') {
+    paneScouting(pane, S, seat);
+  } else if (stage === 'draft') {
+    pane.append(card('Your draft', (S.draftResult || []).length
+      ? table(['Round', '', 'Rating', '', ''], S.draftResult.map((p) => [
+          `R${p.round} #${p.overall}`, `${p.pos} ${p.name}`, `${p.rating}`,
+          p.started ? `<b class="invited">starts</b>` : 'depth',
+          p.pounded ? 'you pushed for him' : '']))
+      : note('Your club had no picks left by the time the board came round.'))
+      + noteEl('The general manager made these calls, not you.'));
+    const missed = S.missedTargets || [];
+    if (missed.length) {
+      pane.append(card('He passed on', table(['', 'You had him at'], missed.map((p) => {
+        const v = scoutView(p);
+        return [`${p.pos} ${p.name}`, `${v.floor}\u2013${v.ceiling}`];
+      })) + noteEl('You made the case. He went another way.')));
+    }
+    const fa = S.signed?.[seat];
+    if (fa) pane.append(card('Free agency', table(['', 'Rating'], [[`${fa.pos} ${fa.name}`, `${fa.rating}`]])));
   } else {
     pane.append(card(c.hired
       ? (c.hired.seat === seat ? 'You got the job' : 'Your rival got out')
@@ -1017,7 +1038,9 @@ function paneOffseason(pane, S) {
   const labels = {
     openings: 'Ready for interviews',
     interviews: 'Done interviewing',
-    decisions: c.hired ? 'Finish' : 'Back to the booth for another year',
+    decisions: c.hired ? 'Finish' : 'On to the draft',
+    scouting: 'Set the board and run the draft',
+    draft: 'Back to the booth for another year',
   };
   const b = el('button', 'btn' + (iAmReady ? '' : ' btn-primary'), iAmReady ? 'Waiting…' : labels[stage]);
   b.disabled = !canReady(S, seat) || iAmReady;
@@ -1033,6 +1056,72 @@ function paneOffseason(pane, S) {
       : 'You both have to be ready before this moves on.'));
   }
   pane.append(box);
+}
+
+/** Your side of the board, with the uncertainty visible. */
+function paneScouting(pane, S, seat) {
+  const side = seat === 'OC' ? 'offense' : 'defense';
+  const left = S.scoutLeft?.[seat] ?? 0;
+  const inf = S.influence?.[seat] ?? 0;
+  const other = seat === 'OC' ? 'DC' : 'OC';
+  const pounded = S.lobby?.table?.[seat] || [];
+  const mePush = S.lobby?.[seat] || 0, themPush = S.lobby?.[other] || 0;
+
+  pane.append(card(`Scouting \u2014 ${left} look${left === 1 ? '' : 's'} left`,
+    noteEl('A range is what your area scouts have so far. Looks narrow it, they never close it.')));
+
+  // The tug of war. Neither coordinator picks; you are both working the GM.
+  const total = Math.max(1, mePush + themPush);
+  const bar = el('section', 'scout-block', '<h3>The room</h3>');
+  bar.insertAdjacentHTML('beforeend',
+    `<div class="tug"><span class="tug-me" style="width:${(mePush / total) * 100}%"></span></div>`
+    + `<p class="scout-note" style="padding:.4rem .6rem 0">You have leaned in ${mePush} time${mePush === 1 ? '' : 's'};
+        ${seat === 'OC' ? 'the defensive' : 'the offensive'} coordinator ${themPush}.
+        ${mePush > themPush ? 'He is listening to you.' : themPush > mePush
+          ? 'He is listening to your rival.' : 'Nobody has his ear yet.'}</p>`);
+  const push = el('div', 'lobby-actions');
+  const pb = el('button', 'btn btn-primary',
+    `Make the case for ${seat === 'OC' ? 'offense' : 'defense'}`);
+  pb.disabled = inf < 1;
+  pb.addEventListener('click', () => { app.season = pushSide(app.season, seat, 1); renderSeason(); });
+  push.append(pb, el('p', 'scout-note', `${inf} influence left. Pounding the table for one player costs two.`));
+  bar.append(push);
+  pane.append(bar);
+
+  const board = (S.board || []).filter((p) => p.side === side).slice(0, 24);
+  const rows = board.map((p) => {
+    const v = scoutView(p);
+    const on = pounded.includes(p.id);
+    return [
+      `${on ? '<mark>' : ''}${p.pos} ${p.name}${on ? '</mark>' : ''}`,
+      `${v.floor}\u2013${v.ceiling}`,
+      v.confidence === 'high' ? 'sure' : v.confidence === 'some' ? 'partial' : '\u2014',
+      `<button class="btn btn-tiny" data-scout="${p.id}"${left <= 0 || p.scouted >= 3 ? ' disabled' : ''}>Look</button>`
+      + ` <button class="btn btn-tiny" data-table="${p.id}"${!on && inf < 2 ? ' disabled' : ''}>${on ? 'Back off' : 'Pound the table'}</button>`,
+    ];
+  });
+  pane.append(card('Prospects', table(['', 'Range', 'Read', ''], rows)
+    + noteEl('You do not make the pick. The general manager does, off his own board, '
+      + 'and he is wrong in his own direction. All you can do is argue.')));
+
+  const fas = (S.freeAgents || []).filter((f) => f.side === side).slice(0, 8);
+  const already = S.signed?.[seat];
+  pane.append(card('Free agents', already
+    ? note(`You signed ${already.pos} ${already.name}.`)
+    : table(['', 'Rating', 'Age', ''], fas.map((f) => [
+        `${f.pos} ${f.name}`, `${f.rating}`, `${f.age}`,
+        `<button class="btn btn-tiny" data-sign="${f.id}">Sign</button>`]))
+      + noteEl('Their tape is public, so the rating is real. The risk is what age does next.')));
+
+  pane.querySelectorAll('[data-scout]').forEach((b) => b.addEventListener('click', () => {
+    app.season = useScout(app.season, seat, b.dataset.scout); renderSeason();
+  }));
+  pane.querySelectorAll('[data-table]').forEach((b) => b.addEventListener('click', () => {
+    app.season = pushPlayer(app.season, seat, b.dataset.table); renderSeason();
+  }));
+  pane.querySelectorAll('[data-sign]').forEach((b) => b.addEventListener('click', () => {
+    app.season = signFreeAgent(app.season, seat, b.dataset.sign); renderSeason();
+  }));
 }
 
 function vacancyCard(S, seat) {
