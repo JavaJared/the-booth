@@ -277,6 +277,16 @@ export function validate(design) {
    double teams decide whether it beats a loaded box or needs a light one. */
 
 export const OL_SPOTS = { LT: [18, 0], LG: [22, 0], C: [26.6, 0], RG: [31, 0], RT: [35, 0] };
+
+/** Run alignments keep the skill players off the linemen — merging the two
+ *  naively put the tight end on top of the right tackle. */
+export const RUN_SPOTS = {
+  '11': { WR1: [3, 0], WR2: [50, 0], WR3: [11, 1], TE1: [39, 0], RB1: [26.6, -5] },
+  '12': { WR1: [4, 0], WR2: [49, 0], TE1: [39, 0], TE2: [14, 0], RB1: [26.6, -5] },
+  '10': { WR1: [3, 0], WR2: [50, 0], WR3: [11, 1], TE1: [42, 1], RB1: [26.6, -5] },
+  '21': { WR1: [4, 0], WR2: [49, 0], TE1: [39, 0], RB1: [26.6, -6], RB2: [31, -3] },
+};
+export const runSpots = (pers) => ({ ...(RUN_SPOTS[pers] || RUN_SPOTS['11']), ...OL_SPOTS });
 const CENTER = 26.6;
 
 export function readRun(design) {
@@ -371,38 +381,68 @@ export function deriveRun(design) {
    playing man or zone — which is how coverages are actually named. */
 
 export const DEF_ALIGN = {
-  EDGE1: [17, 1], DT: [24, 1], EDGE2: [36, 1],
-  LB1: [23, 5], LB2: [31, 5],
-  CB1: [5, 6], CB2: [48, 6], NB: [15, 5],
-  S1: [20, 12], S2: [34, 12],
+  EDGE1: [17, 1], DT1: [23, 1], DT2: [30, 1], EDGE2: [36, 1],
+  LB1: [23, 6], LB2: [31, 6],
+  CB1: [5, 6], CB2: [48, 6], NB: [14, 5],
+  S1: [20, 13], S2: [34, 13],
 };
+const FRONT = ['EDGE1', 'EDGE2', 'DT1', 'DT2'];
 
 export function readDefense(design) {
   const pos = { ...DEF_ALIGN, ...(design.positions || {}) };
-  const rushers = new Set(design.rushers || ['EDGE1', 'EDGE2', 'DT', 'LB1']);
+  const paths = design.paths || {};
   const man = !!design.man;
 
-  const deep = Object.entries(pos).filter(([k, p]) => !rushers.has(k) && p[1] >= 10).length;
-  const box = Object.entries(pos).filter(([, p]) =>
-    p[1] <= 5.5 && p[0] > 13 && p[0] < 41).length;
-  const inTheBox = box + (rushers.size > 4 ? 0 : 0);
-  const press = Object.entries(pos).filter(([k, p]) =>
-    (k === 'CB1' || k === 'CB2' || k === 'NB') && p[1] <= 3).length;
-  const mikeDeep = pos.LB1 && pos.LB1[1] >= 9 || pos.LB2 && pos.LB2[1] >= 9;
-
-  let cov;
-  if (man) cov = deep === 0 ? 'man0' : 'man1';
-  else if (deep <= 1) cov = 'cover3';
-  else if (mikeDeep) cov = 'tampa2';
-  else {
-    // Two deep played wide and deep is quarters; squatted down is Cover 2.
-    const depths = Object.entries(pos).filter(([k, p]) => (k === 'S1' || k === 'S2') && p[1] >= 10)
-      .map(([, p]) => p[1]);
-    const avg = depths.length ? depths.reduce((a, b) => a + b, 0) / depths.length : 12;
-    cov = avg >= 14 ? 'quarters' : 'cover2';
+  // A defender's job comes from what he was drawn doing. A path that crosses
+  // the line is a blitz; one that ends behind it is a zone drop, and how deep
+  // he lands is what actually decides the coverage — not where he stood.
+  const rushers = new Set();
+  const drops = {};
+  for (const [spot, pts] of Object.entries(paths)) {
+    if (!pts || pts.length < 2) continue;
+    const end = pts[pts.length - 1];
+    if (end[1] <= 0.8) rushers.add(spot);
+    else drops[spot] = end;
+  }
+  // Anyone without a drawn assignment rushes if he is on the line.
+  for (const [spot, p] of Object.entries(pos)) {
+    if (paths[spot]?.length >= 2) continue;
+    if (p[1] <= 1.5 && FRONT.includes(spot)) rushers.add(spot);
   }
 
-  return { cov, deep, box: inTheBox, rush: rushers.size, press, man, mikeDeep };
+  const landing = (spot) => drops[spot] || pos[spot];
+  // Twelve yards, not ten: linebackers drop to ten in an ordinary Cover 2, and
+  // counting those as deep turned every two-deep shell into quarters.
+  const deep = Object.keys(pos).filter((k) => !rushers.has(k) && landing(k)[1] >= 12).length;
+  // The box is who lines up near the ball or attacks it, not where a rusher
+  // finishes — a linebacker at six yards is in the box.
+  const inTheBox = Object.keys(pos).filter((k) => {
+    const start = pos[k], end = landing(k);
+    return Math.min(start[1], end[1]) <= 7 && start[0] >= 14 && start[0] <= 40;
+  }).length;
+  const press = ['CB1', 'CB2', 'NB'].filter((k) => pos[k] && pos[k][1] <= 3).length;
+  // A linebacker carrying the deep middle is the Tampa wrinkle. Ordinary zone
+  // drops reach nine or ten yards, so the bar has to be genuinely deep.
+  const deepLB = ['LB1', 'LB2'].filter((k) => {
+    if (rushers.has(k)) return false;
+    const l = landing(k);
+    return l[1] >= 13 && l[0] > 17 && l[0] < 37;
+  }).length;
+
+  // Coverages are named for how many defenders end up deep: two deep is Cover
+  // 2, three is Cover 3, four is quarters. That is the actual convention, and
+  // it falls straight out of where the drops finish.
+  const deepBacks = deep - deepLB;
+  let cov;
+  if (man) cov = deep === 0 ? 'man0' : 'man1';
+  else if (deepBacks >= 4) cov = 'quarters';
+  else if (deepBacks === 2 && deepLB >= 1) cov = 'tampa2';
+  else if (deepBacks === 3) cov = 'cover3';
+  else if (deepBacks === 2) cov = 'cover2';
+  else cov = 'cover3';
+
+  return { cov, deep, deepLB, box: inTheBox, rush: rushers.size, press, man,
+    rushers: [...rushers], drops: Object.keys(drops).length };
 }
 
 export function deriveDefense(design) {
