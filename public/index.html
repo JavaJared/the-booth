@@ -41,6 +41,7 @@
     </div>
 
     <button id="btn-local" class="btn btn-ghost">Single exhibition game, both seats here</button>
+    <button id="btn-designer-solo" class="btn btn-ghost">Draw up a play</button>
     <p id="setup-err" class="err" role="alert"></p>
   </div>
 </section>
@@ -72,6 +73,7 @@
         <b id="week-label">Week 1</b>
         <span id="season-year">2026</span>
       </div>
+      <button id="btn-designer" class="btn btn-tiny">Play designer</button>
       <div class="seat-badge" id="my-seat">Offense</div>
     </div>
     <div class="tabs season-tabs" role="tablist">
@@ -82,6 +84,36 @@
     </div>
   </header>
   <main id="season-pane" class="season-pane"></main>
+</section>
+
+<!-- ============ PLAY DESIGNER ============ -->
+<section id="designer" class="screen" hidden>
+  <header class="season-head">
+    <div class="season-bar">
+      <div class="my-team"><span class="city">Install</span><b>Play designer</b></div>
+      <button id="dz-close" class="btn btn-tiny">Back</button>
+    </div>
+  </header>
+  <main class="dz-wrap">
+    <div class="dz-left">
+      <div class="dz-controls">
+        <label class="form-field"><span>Name</span><input id="dz-name" type="text" placeholder="Rail Mesh"></label>
+        <label class="form-field"><span>Personnel</span><select id="dz-pers" class="select"></select></label>
+        <label class="dz-check"><input type="checkbox" id="dz-pa"> Play action</label>
+      </div>
+      <p class="dz-hint" id="dz-hint">Pick a receiver, then click downfield to draw his route.</p>
+      <div id="dz-field"></div>
+      <div class="dz-actions">
+        <button id="dz-undo" class="btn btn-tiny">Undo point</button>
+        <button id="dz-clear" class="btn btn-tiny">Clear route</button>
+        <button id="dz-save" class="btn btn-primary">Install this play</button>
+      </div>
+    </div>
+    <div class="dz-right">
+      <header class="col-head"><h2>What you drew</h2></header>
+      <div id="dz-read"></div>
+    </div>
+  </main>
 </section>
 
 <!-- ============ GAME ============ -->
