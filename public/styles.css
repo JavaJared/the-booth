@@ -481,3 +481,7 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
   font-size:1.05rem;font-weight:700;color:var(--pencil);margin:0}
 .dz-bad{color:var(--pencil);font-family:var(--hand);font-size:1.05rem;margin:.4rem 0 0}
 @media (max-width:820px){ .dz-wrap{grid-template-columns:1fr} .dz-controls{grid-template-columns:1fr} }
+.dz-modes{margin-bottom:.7rem}
+.dz-modes .tab.is-on{color:var(--paper);background:var(--ink);border-color:var(--ink)}
+.dz-rusher{fill:var(--pencil);stroke:var(--pencil)}
+.dz-deep{stroke:var(--los);stroke-width:.18;stroke-dasharray:.8 .6}
