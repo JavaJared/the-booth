@@ -270,3 +270,157 @@ export function validate(design) {
   if (!design.name || !design.name.trim()) problems.push('Give the play a name.');
   return problems;
 }
+
+/* ================================================================= RUNS
+   A run is drawn as the carrier's path plus where each lineman goes. The
+   aiming point decides whether it attacks inside or the edge; pullers and
+   double teams decide whether it beats a loaded box or needs a light one. */
+
+export const OL_SPOTS = { LT: [18, 0], LG: [22, 0], C: [26.6, 0], RG: [31, 0], RT: [35, 0] };
+const CENTER = 26.6;
+
+export function readRun(design) {
+  const path = design.carrier || [];
+  const blocks = design.blocks || {};
+  if (path.length < 2) return null;
+
+  // Where the carrier crosses the line is the aiming point.
+  let aim = path[path.length - 1];
+  for (let i = 1; i < path.length; i++) {
+    if (path[i][1] >= 0 && path[i - 1][1] < 0) { aim = path[i]; break; }
+    if (path[i][1] >= 0.5) { aim = path[i]; break; }
+  }
+  const gap = aim[0] - CENTER;
+  const start = path[0];
+
+  // Moving away from the aiming point first is misdirection — counter, and the
+  // reason a counter hurts a defence that flows hard.
+  const firstMove = (path[1][0] - start[0]);
+  const misdirection = Math.sign(firstMove) !== Math.sign(gap) && Math.abs(firstMove) > 1.5 ? 1 : 0;
+
+  let pullers = 0, downBlocks = 0, doubles = 0, reach = 0;
+  const targets = [];
+  for (const [spot, pts] of Object.entries(blocks)) {
+    if (!pts || pts.length < 2) continue;
+    const from = OL_SPOTS[spot] || pts[0];
+    const to = pts[pts.length - 1];
+    const lateral = to[0] - from[0];
+    targets.push(to);
+    if (Math.abs(lateral) > 5.5) pullers++;
+    else if (Math.abs(lateral) > 1.2) {
+      if (Math.sign(lateral) === Math.sign(gap || 1)) reach++; else downBlocks++;
+    }
+  }
+  for (let i = 0; i < targets.length; i++) {
+    for (let j = i + 1; j < targets.length; j++) {
+      if (Math.hypot(targets[i][0] - targets[j][0], targets[i][1] - targets[j][1]) < 2.2) doubles++;
+    }
+  }
+
+  const depth = Math.min(...path.map((p) => p[1]));   // how deep he starts
+  return {
+    aimX: aim[0], gap, edge: Math.abs(gap) > 8.5 ? 'outside' : 'inside',
+    misdirection, pullers, downBlocks, doubles, reach,
+    blockers: Object.values(blocks).filter((b) => b && b.length > 1).length,
+    depth,
+  };
+}
+
+export function deriveRun(design) {
+  const r = readRun(design);
+  if (!r) return null;
+  const outside = r.edge === 'outside';
+
+  // Double teams move people; pulls take time. Both are real trades.
+  const success = clamp(0.52 + r.doubles * 0.020 + r.downBlocks * 0.012
+    - r.pullers * 0.012 - (outside ? 0.03 : 0), 0.38, 0.64);
+  const mean = clamp(4.9 + r.doubles * 0.20 + (outside ? 0.55 : 0)
+    + r.misdirection * 0.55 - r.pullers * 0.08, 3.6, 6.6);
+  const sd = clamp(3.1 + (outside ? 1.3 : 0) + r.misdirection * 0.8 + r.pullers * 0.25, 2.6, 5.6);
+  const stuff = clamp(0.14 + r.pullers * 0.018 + (outside ? 0.045 : 0)
+    - r.doubles * 0.015 - r.downBlocks * 0.008, 0.07, 0.26);
+
+  // Sensitivity to a loaded box. Misdirection and pulls beat a defence that is
+  // counting bodies; straight-ahead power needs the numbers to be even.
+  // Misdirection is what beats a loaded box. A puller on its own does not —
+  // power still needs to win the numbers, it just wins them at one point.
+  const boxFit = clamp(1.05 - r.misdirection * 0.30 - r.pullers * 0.05
+    + r.doubles * 0.10 + r.downBlocks * 0.08 - (outside ? 0.25 : 0), 0.4, 1.5);
+
+  const tag = [
+    r.misdirection ? 'misdirection' : null,
+    r.pullers >= 2 ? 'double pull' : r.pullers === 1 ? 'pull' : null,
+    r.doubles >= 2 ? 'double teams' : null,
+    outside ? 'perimeter' : null,
+  ].filter(Boolean).slice(0, 2).join(', ') || 'downhill';
+
+  return {
+    id: design.id, name: design.name || 'Untitled', family: 'run',
+    pers: design.pers || '11', tag, custom: true,
+    success: +success.toFixed(3), mean: +mean.toFixed(2), sd: +sd.toFixed(2),
+    stuff: +stuff.toFixed(3), fumble: 0.008,
+    edge: r.edge, boxFit: +boxFit.toFixed(2),
+    targets: design.carrierSpot === 'QB' ? { QB: 10 } : { RB1: 7, RB2: 3 },
+    structure: r,
+  };
+}
+
+/* ============================================================= DEFENSE
+   A defensive call is drawn by placing defenders and marking who rushes.
+   The coverage names itself from how many are deep and whether the backs are
+   playing man or zone — which is how coverages are actually named. */
+
+export const DEF_ALIGN = {
+  EDGE1: [17, 1], DT: [24, 1], EDGE2: [36, 1],
+  LB1: [23, 5], LB2: [31, 5],
+  CB1: [5, 6], CB2: [48, 6], NB: [15, 5],
+  S1: [20, 12], S2: [34, 12],
+};
+
+export function readDefense(design) {
+  const pos = { ...DEF_ALIGN, ...(design.positions || {}) };
+  const rushers = new Set(design.rushers || ['EDGE1', 'EDGE2', 'DT', 'LB1']);
+  const man = !!design.man;
+
+  const deep = Object.entries(pos).filter(([k, p]) => !rushers.has(k) && p[1] >= 10).length;
+  const box = Object.entries(pos).filter(([, p]) =>
+    p[1] <= 5.5 && p[0] > 13 && p[0] < 41).length;
+  const inTheBox = box + (rushers.size > 4 ? 0 : 0);
+  const press = Object.entries(pos).filter(([k, p]) =>
+    (k === 'CB1' || k === 'CB2' || k === 'NB') && p[1] <= 3).length;
+  const mikeDeep = pos.LB1 && pos.LB1[1] >= 9 || pos.LB2 && pos.LB2[1] >= 9;
+
+  let cov;
+  if (man) cov = deep === 0 ? 'man0' : 'man1';
+  else if (deep <= 1) cov = 'cover3';
+  else if (mikeDeep) cov = 'tampa2';
+  else {
+    // Two deep played wide and deep is quarters; squatted down is Cover 2.
+    const depths = Object.entries(pos).filter(([k, p]) => (k === 'S1' || k === 'S2') && p[1] >= 10)
+      .map(([, p]) => p[1]);
+    const avg = depths.length ? depths.reduce((a, b) => a + b, 0) / depths.length : 12;
+    cov = avg >= 14 ? 'quarters' : 'cover2';
+  }
+
+  return { cov, deep, box: inTheBox, rush: rushers.size, press, man, mikeDeep };
+}
+
+export function deriveDefense(design) {
+  const d = readDefense(design);
+  const runCommit = clamp((d.box - 6) * 0.14 + (d.rush - 4) * 0.06
+    + d.press * 0.04 - (d.deep >= 2 ? 0.12 : 0), -0.4, 0.5);
+
+  const pers = d.deep >= 2 && d.box <= 5 ? 'dime' : d.box >= 8 ? 'base' : 'nickel';
+  const tag = [
+    d.rush >= 6 ? 'all out' : d.rush === 5 ? 'five man pressure' : null,
+    d.man ? 'man' : d.deep >= 2 ? 'two deep' : 'single high',
+    d.box >= 8 ? 'loaded box' : d.box <= 5 ? 'light box' : null,
+  ].filter(Boolean).slice(0, 2).join(', ');
+
+  return {
+    id: design.id, name: design.name || 'Untitled', custom: true,
+    cov: d.cov, box: clamp(d.box, 4, 9), rush: clamp(d.rush, 3, 7),
+    runCommit: +runCommit.toFixed(2), pers, tag,
+    structure: d,
+  };
+}
