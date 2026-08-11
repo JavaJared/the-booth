@@ -164,6 +164,20 @@ export const DEFENSE = [
 ];
 
 export const OFF_BY_ID = Object.fromEntries(OFFENSE.map((p) => [p.id, p]));
+
+/**
+ * Plays a coordinator drew. The resolver looks concepts up by id, so custom
+ * plays have to be registered before a game runs — on the server as well as in
+ * the browser, or a call would resolve on one side and not the other.
+ */
+export function registerCustomPlays(list = []) {
+  for (const p of list) {
+    if (!p?.id) continue;
+    if (!OFF_BY_ID[p.id]) OFFENSE.push(p);
+    OFF_BY_ID[p.id] = p;
+  }
+}
+export const customPlays = () => OFFENSE.filter((p) => p.custom);
 export const DEF_BY_ID = Object.fromEntries(DEFENSE.map((p) => [p.id, p]));
 
 // Personnel mismatch: offense heavy vs defense light helps the run, and
