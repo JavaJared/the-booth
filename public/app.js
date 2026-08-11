@@ -8,6 +8,8 @@ import { createSeason, advanceWeek, simRemainingWeek, userGame, record as season
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
   interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
+import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute } from './shared/designer.js';
+import { registerCustomPlays } from './shared/playbook.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 
@@ -226,8 +228,158 @@ async function connectFirebase() {
 }
 
 function show(id) {
-  ['setup', 'lobby', 'season', 'game'].forEach((s) => { $(s).hidden = s !== id; });
+  ['setup', 'lobby', 'season', 'designer', 'game'].forEach((s) => { $(s).hidden = s !== id; });
 }
+
+/* ============================================================ play designer
+   A coordinator does not label a play; the routes decide what it is. The read
+   panel updates as you draw, so you can see a concept form. */
+
+const DZ = { pers: '11', sel: null, routes: {}, pa: false };
+const DZ_W = 60, DZ_H = 46, DZ_LOS = 34;          // viewBox units
+const fx = (x) => 3 + (x / FIELD_W) * (DZ_W - 6);  // field x -> svg x
+const fy = (y) => DZ_LOS - y * 0.95;               // yards downfield -> svg y
+const ux = (px) => ((px - 3) / (DZ_W - 6)) * FIELD_W;
+const uy = (py) => (DZ_LOS - py) / 0.95;
+
+function openDesigner() {
+  const sel = $('dz-pers');
+  sel.innerHTML = Object.entries(FORMATIONS)
+    .map(([k, v]) => `<option value="${k}">${k} personnel &mdash; ${v.label}</option>`).join('');
+  sel.value = DZ.pers;
+  show('designer');
+  drawDesigner();
+}
+
+function drawDesigner() {
+  const spots = FORMATIONS[DZ.pers].spots;
+  const p = [];
+  p.push(`<svg viewBox="0 0 ${DZ_W} ${DZ_H}" class="dz-field" xmlns="http://www.w3.org/2000/svg">`);
+  for (let y = -5; y <= 30; y += 5) {
+    p.push(`<line x1="2" y1="${fy(y)}" x2="${DZ_W - 2}" y2="${fy(y)}" class="${y === 0 ? 'dz-los' : 'dz-grid'}"/>`);
+    if (y > 0) p.push(`<text x="${DZ_W - 2.5}" y="${fy(y) + 0.5}" class="dz-yard">${y}</text>`);
+  }
+
+  for (const [spot, pos] of Object.entries(spots)) {
+    const pts = DZ.routes[spot];
+    if (pts && pts.length > 1) {
+      const d = pts.map((q, i) => `${i ? 'L' : 'M'} ${fx(q[0])} ${fy(q[1])}`).join(' ');
+      const on = DZ.sel === spot ? ' on' : '';
+      p.push(`<path d="${d}" class="dz-route${on}"/>`);
+      const a = pts[pts.length - 2], b = pts[pts.length - 1];
+      const ang = Math.atan2(fy(b[1]) - fy(a[1]), fx(b[0]) - fx(a[0]));
+      const tip = [fx(b[0]), fy(b[1])];
+      const wing = (t) => [tip[0] - 1.4 * Math.cos(ang - t), tip[1] - 1.4 * Math.sin(ang - t)];
+      const w1 = wing(0.45), w2 = wing(-0.45);
+      p.push(`<polygon points="${tip} ${w1} ${w2}" class="dz-arrow${on}"/>`);
+    }
+  }
+  for (const [spot, pos] of Object.entries(spots)) {
+    const cls = DZ.sel === spot ? 'dz-spot on' : (DZ.routes[spot]?.length > 1 ? 'dz-spot has' : 'dz-spot');
+    p.push(`<circle cx="${fx(pos[0])}" cy="${fy(pos[1])}" r="1.5" class="${cls}" data-spot="${spot}"/>`);
+    p.push(`<text x="${fx(pos[0])}" y="${fy(pos[1]) + 3.6}" class="dz-label">${spot}</text>`);
+  }
+  p.push('</svg>');
+  $('dz-field').innerHTML = p.join('');
+
+  const svg = $('dz-field').querySelector('svg');
+  svg.querySelectorAll('.dz-spot').forEach((c) => c.addEventListener('click', (e) => {
+    e.stopPropagation();
+    DZ.sel = c.dataset.spot;
+    if (!DZ.routes[DZ.sel]) DZ.routes[DZ.sel] = [spots[DZ.sel]];
+    drawDesigner();
+  }));
+  svg.addEventListener('click', (e) => {
+    if (!DZ.sel) { $('dz-hint').textContent = 'Pick a receiver first, then click where he goes.'; return; }
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * DZ_W;
+    const py = ((e.clientY - r.top) / r.height) * DZ_H;
+    DZ.routes[DZ.sel] = [...(DZ.routes[DZ.sel] || [spots[DZ.sel]]),
+      [+ux(px).toFixed(1), +uy(py).toFixed(1)]];
+    drawDesigner();
+  });
+
+  readDesigner();
+}
+
+/** Live read of the concept, so the geometry explains itself. */
+function readDesigner() {
+  const design = {
+    id: 'custom-' + Date.now(), name: $('dz-name').value,
+    pers: DZ.pers, playAction: DZ.pa,
+    assignments: Object.fromEntries(Object.entries(DZ.routes).filter(([, v]) => v.length > 1)),
+    blockers: 5 - Object.values(DZ.routes).filter((v) => v.length > 1).length,
+  };
+  const box = $('dz-read');
+  const routed = Object.keys(design.assignments).length;
+  if (routed < 2) {
+    box.innerHTML = `<p class="scout-note">Draw at least two routes and the concept will name itself.</p>`;
+    return;
+  }
+  const play = derivePlay(design);
+  const c = play.structure;
+  const covs = [['man1', 'Man'], ['cover2', 'Cover 2'], ['tampa2', 'Tampa 2'],
+    ['cover3', 'Cover 3'], ['quarters', 'Quarters']];
+  const best = covs.reduce((a, b) => (play.vs[a[0]] > play.vs[b[0]] ? a : b));
+  box.innerHTML = `<p class="dz-tag">${play.tag}</p>`
+    + `<p class="scout-note" style="padding:0">Best against <b>${best[1]}</b>.</p>`
+    + '<div class="dz-read"><h4>Structure</h4></div>'
+    + table(['', ''], [
+        ['Crossers', `${c.crossers}`],
+        ['Rub / pick action', `${c.rubs}`],
+        ['Vertical stretch', `${c.verticalStretch} level${c.verticalStretch === 1 ? '' : 's'}`],
+        ['Deep routes', `${c.deep}`],
+        ['Blockers kept in', `${c.blockers}`],
+      ])
+    + '<div class="dz-read"><h4>How it grades</h4></div>'
+    + table(['', ''], [
+        ['Completion', `${Math.round(play.comp * 100)}%`],
+        ['Yards per catch', play.mean.toFixed(1)],
+        ['Sack risk', `${(play.sack * 100).toFixed(1)}%`],
+        ['Versus pressure', play.blitzFit > 0.5 ? 'good' : play.blitzFit > 0 ? 'fair' : 'poor'],
+      ])
+    + '<div class="dz-read"><h4>Coverage</h4></div>'
+    + table(['', 'Edge'], covs.map(([k, l]) =>
+        [l, `<span class="gap ${play.vs[k] > 0.03 ? 'good' : play.vs[k] < -0.03 ? 'bad' : ''}">${
+          play.vs[k] > 0 ? '+' : ''}${play.vs[k].toFixed(2)}</span>`]));
+  const bad = validate(design);
+  if (bad.length) box.insertAdjacentHTML('beforeend', `<p class="dz-bad">${bad[0]}</p>`);
+}
+
+$('btn-designer').addEventListener('click', openDesigner);
+$('btn-designer-solo').addEventListener('click', openDesigner);
+$('dz-pers').addEventListener('change', (e) => { DZ.pers = e.target.value; DZ.routes = {}; DZ.sel = null; drawDesigner(); });
+$('dz-pa').addEventListener('change', (e) => { DZ.pa = e.target.checked; readDesigner(); });
+$('dz-name').addEventListener('input', readDesigner);
+$('dz-undo').addEventListener('click', () => {
+  if (DZ.sel && DZ.routes[DZ.sel]?.length > 1) DZ.routes[DZ.sel].pop();
+  drawDesigner();
+});
+$('dz-clear').addEventListener('click', () => {
+  if (DZ.sel) delete DZ.routes[DZ.sel];
+  drawDesigner();
+});
+$('dz-close').addEventListener('click', () => { show(app.season ? 'season' : 'setup'); if (app.season) renderSeason(); });
+$('dz-save').addEventListener('click', () => {
+  const design = {
+    id: 'cp' + Math.random().toString(36).slice(2, 8), name: $('dz-name').value,
+    pers: DZ.pers, playAction: DZ.pa,
+    assignments: Object.fromEntries(Object.entries(DZ.routes).filter(([, v]) => v.length > 1)),
+    blockers: 5 - Object.values(DZ.routes).filter((v) => v.length > 1).length,
+  };
+  const bad = validate(design);
+  if (bad.length) return flash(bad[0]);
+  const play = derivePlay(design);
+  registerCustomPlays([play]);
+  if (app.season) {
+    app.season = { ...app.season, customPlays: [...(app.season.customPlays || []), play] };
+    saveSeason();
+  }
+  DZ.routes = {}; DZ.sel = null;
+  $('dz-name').value = '';
+  flash(`${play.name} installed — ${play.tag}.`);
+  drawDesigner();
+});
 
 /* ============================================================ season
    Local seasons live in this tab and survive a refresh. Losing seventeen
@@ -973,6 +1125,12 @@ function renderCallSheet(g, s, mine) {
       const grp = el('div', 'group', '<h3>Clock</h3>');
       grp.append(mk('spike', 'Spike', 'Stop the clock', commit({ special: 'spike' })));
       sheet.append(grp);
+    }
+    const mine = OFFENSE.filter((p) => p.custom);
+    if (mine.length) {
+      const box = el('div', 'group', '<h3>Your install</h3>');
+      mine.forEach((p) => box.append(mk(p.id, p.name, `${p.pers} \u00b7 ${p.tag}`, commit({ callId: p.id }))));
+      sheet.append(box);
     }
     for (const grp of OFF_GROUPS) {
       const box = el('div', 'group', `<h3>${grp.title}</h3>`);
