@@ -18,6 +18,23 @@ const API_URL = '/api';   // Netlify function; see netlify.toml
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
 const abbr = (s) => s.slice(0, 3).toUpperCase();
+
+/**
+ * An arrowhead, plus the point the line should stop at. Drawing the line all
+ * the way to the tip leaves the stroke poking through the triangle instead of
+ * ending in it, which is what made these look wrong.
+ */
+function arrow(from, to, len = 1.7, halfWidth = 0.8) {
+  const dx = to[0] - from[0], dy = to[1] - from[1];
+  const m = Math.hypot(dx, dy) || 1;
+  const ux = dx / m, uy = dy / m;
+  const base = [to[0] - ux * len, to[1] - uy * len];
+  const px = -uy, py = ux;                      // perpendicular
+  const pts = [to,
+    [base[0] + px * halfWidth, base[1] + py * halfWidth],
+    [base[0] - px * halfWidth, base[1] - py * halfWidth]];
+  return { base, points: pts.map((p) => p.map((v) => +v.toFixed(2)).join(',')).join(' ') };
+}
 const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 const ORD = { 1: '1ST', 2: '2ND', 3: '3RD', 4: '4TH', 5: 'OT' };
 
@@ -263,15 +280,16 @@ function drawDesigner() {
   for (const [spot, pos] of Object.entries(spots)) {
     const pts = DZ.routes[spot];
     if (pts && pts.length > 1) {
-      const d = pts.map((q, i) => `${i ? 'L' : 'M'} ${fx(q[0])} ${fy(q[1])}`).join(' ');
       const on = DZ.sel === spot ? ' on' : '';
+      const svgPts = pts.map((q) => [fx(q[0]), fy(q[1])]);
+      const tip = svgPts[svgPts.length - 1];
+      const prev = svgPts[svgPts.length - 2];
+      const { base, points } = arrow(prev, tip, 1.7, 0.8);
+      // Stop the stroke at the base so the route actually ends in the triangle.
+      const line = [...svgPts.slice(0, -1), base];
+      const d = line.map((q, i) => `${i ? 'L' : 'M'} ${q[0].toFixed(2)} ${q[1].toFixed(2)}`).join(' ');
       p.push(`<path d="${d}" class="dz-route${on}"/>`);
-      const a = pts[pts.length - 2], b = pts[pts.length - 1];
-      const ang = Math.atan2(fy(b[1]) - fy(a[1]), fx(b[0]) - fx(a[0]));
-      const tip = [fx(b[0]), fy(b[1])];
-      const wing = (t) => [tip[0] - 1.4 * Math.cos(ang - t), tip[1] - 1.4 * Math.sin(ang - t)];
-      const w1 = wing(0.45), w2 = wing(-0.45);
-      p.push(`<polygon points="${tip} ${w1} ${w2}" class="dz-arrow${on}"/>`);
+      p.push(`<polygon points="${points}" class="dz-arrow${on}"/>`);
     }
   }
   for (const [spot, pos] of Object.entries(spots)) {
@@ -1061,10 +1079,17 @@ function renderField(g, s, plays) {
       const x1 = xAt(from), x2 = xAt(to), mid = (x1 + x2) / 2;
       const lift = kick ? 7.5 : Math.min(5, 1.4 + Math.abs(x2 - x1) * 0.11);
       const miss = o.special === 'fg' && !o.made ? ' miss' : '';
-      parts.push(`<path d="M ${x1} ${VH / 2} Q ${mid} ${VH / 2 - lift} ${x2} ${VH / 2}" class="trace${kick ? ' kick' : ''}${miss}"/>`);
-      if (!kick) {
-        const head = x2 > x1 ? 1 : -1;
-        parts.push(`<path d="M ${x2} ${VH / 2} l ${-2.2 * head} -1.5 l 0.5 1.5 l -0.5 1.5 z" class="tracehead"/>`);
+      const y = VH / 2;
+      if (kick) {
+        parts.push(`<path d="M ${x1} ${y} Q ${mid} ${y - lift} ${x2} ${y}" class="trace kick${miss}"/>`);
+      } else {
+        // The curve leaves its control point on a slant, so the head has to sit
+        // on that tangent rather than flat along the x axis.
+        const ctrl = [mid, y - lift];
+        const tip = [x2, y];
+        const { base, points } = arrow(ctrl, tip, 2.0, 1.0);
+        parts.push(`<path d="M ${x1} ${y} Q ${ctrl[0]} ${ctrl[1]} ${base[0].toFixed(2)} ${base[1].toFixed(2)}" class="trace"/>`);
+        parts.push(`<polygon points="${points}" class="tracehead"/>`);
       }
     }
   }
