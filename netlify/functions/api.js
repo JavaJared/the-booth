@@ -10,7 +10,9 @@ import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
 import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   simRemainingWeek, advanceWeek, startOffseason, recordInterview,
-  setOffseasonReady, advanceOffseason, canReady, bothReady } from '../../public/shared/season.js';
+  setOffseasonReady, advanceOffseason, canReady, bothReady,
+  openScouting, useScout, pushSide, pushPlayer, signFreeAgent, boardViews,
+  runDraft } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 
 class ApiError extends Error {
@@ -60,6 +62,24 @@ const gameRef = (id) => store().collection('games').doc(id);
 const seasonRef = (id) => store().collection('seasons').doc(id);
 
 const seatsIn = (doc) => ['OC', 'DC'].filter((s) => doc.seats?.[s]);
+
+// True ratings live here and are never readable by a client. The class is
+// generated from a secret seed for the same reason: the season seed is public,
+// so anything derived from it can be regenerated in a browser console.
+const privateRef = (id) => seasonRef(id).collection('private').doc('draft');
+
+async function loadBoard(seasonId) {
+  const snap = await privateRef(seasonId).get();
+  return snap.exists ? snap.data() : null;
+}
+
+/** Split a scouting-stage season into what is stored where. */
+async function saveScouting(seasonId, season, seats) {
+  const { board, draftSeed, ...pub } = season;
+  await privateRef(seasonId).set({ board, draftSeed: draftSeed || null });
+  await seasonRef(seasonId).update({ ...dehydrate(pub), ...boardViews(board, seats) });
+  return pub;
+}
 
 async function loadSeason(id, uid) {
   const snap = await seasonRef(id).get();
@@ -262,6 +282,51 @@ const actions = {
       .filter((t) => !next.carousel.banked?.[seat]?.[t]).length };
   },
 
+  /* ---------------------------------------------- scouting and the draft */
+
+  async useScout(uid, { seasonId, prospectId }) {
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
+    const priv = await loadBoard(seasonId);
+    if (!priv) throw new ApiError(409, 'The board is not set yet.');
+    const next = useScout({ ...season, board: priv.board }, seat, prospectId);
+    if (next.scoutLeft[seat] === season.scoutLeft[seat]) {
+      throw new ApiError(409, 'No looks left, or that is not your side of the ball.');
+    }
+    await saveScouting(seasonId, { ...next, draftSeed: priv.draftSeed }, seatsIn(doc));
+    return { left: next.scoutLeft[seat] };
+  },
+
+  async pushSide(uid, { seasonId, amount = 1 }) {
+    const { seat, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
+    const next = pushSide(season, seat, Math.max(1, Math.min(6, Number(amount) || 1)));
+    if (next === season) throw new ApiError(409, 'You are out of influence.');
+    await seasonRef(seasonId).update({ influence: next.influence, lobby: next.lobby });
+    return { influence: next.influence[seat] };
+  },
+
+  async pushPlayer(uid, { seasonId, prospectId }) {
+    const { seat, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
+    const next = pushPlayer(season, seat, prospectId);
+    if (next === season) throw new ApiError(409, 'Not your side of the ball, or not enough influence.');
+    await seasonRef(seasonId).update({ influence: next.influence, lobby: next.lobby });
+    return { influence: next.influence[seat] };
+  },
+
+  async signFreeAgent(uid, { seasonId, faId }) {
+    const { seat, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
+    if (season.signed?.[seat]) throw new ApiError(409, 'You already signed someone.');
+    const next = signFreeAgent(season, seat, faId);
+    if (next === season) throw new ApiError(409, 'That player is not available to you.');
+    await seasonRef(seasonId).update({
+      rosters: next.rosters, freeAgents: next.freeAgents, signed: next.signed,
+    });
+    return { ok: true };
+  },
+
   /** Ready up. When both coordinators have, the offseason moves on. */
   async readyOffseason(uid, { seasonId, ready = true }) {
     const { doc, seat, season } = await loadSeason(seasonId, uid);
@@ -270,8 +335,32 @@ const actions = {
       throw new ApiError(409, 'You still have clubs to sit down with.');
     }
     const seats = seatsIn(doc);
+    const stage = season.carousel?.stage;
     let next = setOffseasonReady(season, seat, ready);
-    if (bothReady(next, seats)) next = advanceOffseason(next, seats);
+    if (!bothReady(next, seats)) {
+      await seasonRef(seasonId).update({ carousel: next.carousel });
+      return { stage, phase: next.phase };
+    }
+
+    if (stage === 'decisions' && !next.carousel.hired) {
+      // Opening the board: generate it from a secret the clients never see.
+      const secret = Math.random().toString(36).slice(2, 14);
+      const opened = openScouting(next, secret);
+      opened.carousel = { ...opened.carousel, stage: 'scouting', ready: {} };
+      await saveScouting(seasonId, { ...opened, draftSeed: secret }, seats);
+      return { stage: 'scouting', phase: opened.phase };
+    }
+    if (stage === 'scouting') {
+      const priv = await loadBoard(seasonId);
+      const drafted = runDraft({ ...next, board: priv?.board || [] }, seats);
+      drafted.carousel = { ...drafted.carousel, stage: 'draft', ready: {} };
+      const { board, draftSeed, ...pub } = drafted;
+      await privateRef(seasonId).set({ board, draftSeed: priv?.draftSeed || null });
+      await seasonRef(seasonId).update({ ...dehydrate(pub), ...boardViews(board, seats) });
+      return { stage: 'draft', phase: drafted.phase };
+    }
+
+    next = advanceOffseason(next, seats);
     await seasonRef(seasonId).update(dehydrate(next));
     return { stage: next.carousel?.stage || null, phase: next.phase };
   },
