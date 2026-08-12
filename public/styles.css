@@ -563,3 +563,30 @@ table.scout s{color:var(--ink-3)}
 .ovr.is-exact span{color:var(--pencil)}
 .trait.exact{border-color:var(--ink)}
 .trait.exact u{color:var(--ink)}
+
+/* ---------- depth chart ---------- */
+.depth{display:grid;gap:.9rem;margin-bottom:1rem}
+.depth-group{background:var(--pad);border:1px solid var(--ink);border-radius:2px;overflow:hidden}
+.depth-group h4{margin:0;font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+  font-size:.63rem;font-weight:600;color:var(--paper);background:var(--ink);padding:.28rem .55rem}
+.depth-row{display:grid;grid-template-columns:2rem 2rem minmax(0,1fr) 2.6rem minmax(0,1.6fr);
+  gap:.5rem;align-items:baseline;padding:.4rem .55rem;border-bottom:1px solid var(--hair)}
+.depth-row:last-child{border-bottom:0}
+.depth-row:nth-child(odd){background:rgba(217,227,230,.2)}
+.depth-row .slot{font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em;
+  font-size:.6rem;font-weight:600;color:var(--ink-3)}
+.depth-row.is-starter .slot{color:var(--pencil)}
+.depth-row .num{font-family:var(--mono);font-size:.7rem;color:var(--ink-3);text-align:right}
+.depth-row .who b{font-size:.88rem;font-weight:600}
+.depth-row .who span{font-size:.7rem;color:var(--ink-3);margin-left:.35rem}
+.depth-row .rk{font-style:normal;font-family:var(--cond);font-size:.58rem;font-weight:700;
+  color:var(--paper);background:var(--pencil);border-radius:2px;padding:0 .2rem;vertical-align:.1em}
+.depth-row .rate{font-family:var(--cond);font-weight:700;font-size:1.05rem;text-align:right}
+.depth-row .rate.good{color:#2F7D4F}
+.depth-row .rate.bad{color:var(--pencil)}
+.depth-row .line{font-family:var(--mono);font-size:.7rem;color:var(--ink-2);
+  font-variant-numeric:tabular-nums}
+@media (max-width:720px){
+  .depth-row{grid-template-columns:1.8rem 1.8rem minmax(0,1fr) 2.4rem;row-gap:.15rem}
+  .depth-row .line{grid-column:3/-1;font-size:.68rem}
+}
