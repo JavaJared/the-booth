@@ -214,8 +214,19 @@ export function scoutReport(p, opts = {}) {
 
   // How many traits are legible at this level of work.
   const shown = looks <= 0 ? 0 : looks === 1 ? 2 : looks === 2 ? 3 : keys.length;
-  const pull = 1 - Math.pow(0.45, looks);
-  const band = Math.max(2.5, p.noise * Math.pow(0.55, looks));
+  // At full scouting there is nothing left to learn: the report reads exactly,
+  // not narrowly. Anything short of that stays a range.
+  const complete = looks >= SCOUT_MAX_PER_PLAYER;
+  const pull = complete ? 1 : 1 - Math.pow(0.45, looks);
+  const band = complete ? 0 : Math.max(2.5, p.noise * Math.pow(0.55, looks));
+
+  /** Never let an incomplete read collapse to a single grade: a narrow band
+   *  that happens to sit inside one letter is luck, not certainty. */
+  const spread = (lo, hi) => {
+    if (complete || lo !== hi) return [lo, hi];
+    const at = GRADE_ORDER.indexOf(lo);
+    return [GRADE_ORDER[Math.max(0, at - 1)], GRADE_ORDER[Math.min(GRADE_ORDER.length - 1, at + 1)]];
+  };
 
   const traits = keys.map((key, i) => {
     const truth = p.traits[key];
@@ -223,28 +234,29 @@ export function scoutReport(p, opts = {}) {
     const measured = p.combine && Object.entries(DRILL_TRAIT).some(([d, t]) => t === key && p.combine[d] != null);
     const known = i < shown || (measured && looks >= 0);
     if (!known) return { key, label: TRAITS[key], weight: weights[key], unknown: true };
-    const centre = measured && i >= shown
-      ? truth + gauss(mulberry32(hashSeed(`${p.id}:${key}`)), 0, 4)
-      : p.buzz + (truth - p.buzz) * Math.max(pull, measured ? 0.85 : 0);
-    const b = measured && i >= shown ? 5 : band;
+    const centre = complete ? truth
+      : measured && i >= shown
+        ? truth + gauss(mulberry32(hashSeed(`${p.id}:${key}`)), 0, 4)
+        : p.buzz + (truth - p.buzz) * Math.max(pull, measured ? 0.85 : 0);
+    const b = complete ? 0 : (measured && i >= shown ? 5 : band);
+    const [low, high] = spread(grade(clamp(centre - b, 25, 99)), grade(clamp(centre + b, 25, 99)));
     return {
-      key, label: TRAITS[key], weight: weights[key],
-      low: grade(clamp(centre - b, 25, 99)),
-      high: grade(clamp(centre + b, 25, 99)),
+      key, label: TRAITS[key], weight: weights[key], low, high,
       measured: measured && i >= shown,
     };
   });
 
-  const centre = p.buzz + (p.rating - p.buzz) * pull * 0.94;
+  const centre = complete ? p.rating : p.buzz + (p.rating - p.buzz) * pull * 0.94;
   return {
     id: p.id, name: p.name, pos: p.pos, side: p.side, school: p.school, age: p.age,
     buzz: p.buzz, projected: p.projected, projRound: p.projRound,
-    overallLow: grade(clamp(centre - band, 25, 99)),
-    overallHigh: grade(clamp(centre + band, 25, 99)),
+    overallLow: spread(grade(clamp(centre - band, 25, 99)), grade(clamp(centre + band, 25, 99)))[0],
+    overallHigh: spread(grade(clamp(centre - band, 25, 99)), grade(clamp(centre + band, 25, 99)))[1],
     traits,
     combine: p.combine,
     scouted: looks,
-    confidence: looks >= 4 ? 'complete' : looks >= 2 ? 'solid' : looks >= 1 ? 'partial' : 'none',
+    confidence: complete ? 'complete' : looks >= 2 ? 'solid' : looks >= 1 ? 'partial' : 'none',
+    exact: complete,
     ...(opts.reveal ? { trueRating: p.rating, trueGrade: grade(p.rating) } : {}),
   };
 }
