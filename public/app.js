@@ -1027,8 +1027,9 @@ function paneOffseason(pane, S) {
   } else if (stage === 'scouting') {
     paneScouting(pane, S, seat);
   } else if (stage === 'draft' && S.draftRoom) {
-    paneDraft(pane, S, seat);
-    return;
+    // Only a finished room falls through to the ready-up controls; while the
+    // draft is live, the pick button is the only way forward.
+    if (!paneDraft(pane, S, seat)) return;
   } else if (stage === 'draft') {
     pane.append(card('Your draft', (S.draftResult || []).length
       ? table(['Round', '', 'Rating', '', ''], S.draftResult.map((p) => [
@@ -1065,7 +1066,7 @@ function paneOffseason(pane, S) {
     interviews: 'Done interviewing',
     decisions: c.hired ? 'Finish' : 'On to the draft',
     scouting: 'Start the draft',
-    draft: 'Back to the booth for another year',
+    draft: `Report for ${S.year + 1} training camp`,
   };
   const b = el('button', 'btn' + (iAmReady ? '' : ' btn-primary'), iAmReady ? 'Waiting…' : labels[stage]);
   b.disabled = !canReady(S, seat) || iAmReady;
@@ -1199,17 +1200,22 @@ function paneDraft(pane, S, seat) {
   }
 
   if (room.done) {
-    pane.append(card('Your draft class', table(['', '', 'Grade', ''],
-      (S.draftResult || []).map((p) => [`R${p.round} #${p.overall}`, `${p.pos} ${p.name}`,
-        `${p.rating}`, p.started ? '<b class="invited">starts</b>' : 'depth']))));
+    const mine = S.draftResult || [];
+    pane.append(card('Your draft class', mine.length
+      ? table(['', '', 'Grade', ''], mine.map((p) => [`R${p.round} #${p.overall}`,
+          `${p.pos} ${p.name}`, `${p.rating}`,
+          p.started ? '<b class="invited">starts</b>' : 'depth']))
+      : note('Your club made no selections.')));
     const missed = S.missedTargets || [];
     if (missed.length) {
       pane.append(card('Off your board, gone elsewhere', table(['', 'Really was', 'Taken'],
         missed.map((p) => [`${p.pos} ${p.name}`, `${p.trueGrade}`,
-          p.takenBy ? `${p.takenBy} #${p.overall}` : 'undrafted']))
+          p.takenBy ? `${TEAM_BY_ID[p.takenBy]?.name || p.takenBy} #${p.overall}` : 'undrafted']))
         + noteEl('You did the work. He was not your call.')));
     }
-    return;
+    // Signal that the stage's ready-up controls should follow. Returning here
+    // unconditionally left the finished draft with no way out of it.
+    return true;
   }
 
   // On the clock.
