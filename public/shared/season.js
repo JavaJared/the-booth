@@ -11,7 +11,7 @@ import { isSuccess } from './scout.js';
 import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
   scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
-import { makeCoaches, firings, openingFor, resumeScore, invitesFor,
+import { makeCoaches, firings, openingFor, resumeScore, careerScore, invitesFor,
   interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
 
 export const REGULAR_WEEKS = 18;
@@ -243,11 +243,14 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
   const openings = firings(season, coaches).map((t) => openingFor(t, season, coaches));
   const resumes = Object.fromEntries(seats.map((s) => [s, resume(season, s)]));
 
+  const careers = Object.fromEntries(seats.map((s) => [s, careerResume(season, s)]));
   const invited = {};
   for (const seat of seats) {
-    invited[seat] = openings
-      .filter((o) => invitesFor(o, [{ id: seat, resume: resumes[seat] }], season.seed).length)
-      .map((o) => o.teamId);
+    invited[seat] = openings.filter((o) => {
+      const score = careerScore(careers[seat], o);
+      const rng = mulberry32(hashSeed(`${season.seed}:invite:${o.teamId}:${seat}`));
+      return score >= 46 + rng() * 22;
+    }).map((o) => o.teamId);
   }
   return {
     ...season,
@@ -255,7 +258,12 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
     carousel: {
       coaches, openings, invited,
       resumeScores: Object.fromEntries(seats.map((s) =>
-        [s, Object.fromEntries(openings.map((o) => [o.teamId, resumeScore(resumes[s], o)]))])),
+        [s, Object.fromEntries(openings.map((o) => [o.teamId, careerScore(careers[s], o)]))])),
+      careerSnapshot: Object.fromEntries(seats.map((s) => [s, {
+        seasons: careers[s].seasons, totalW: careers[s].totalW, totalL: careers[s].totalL,
+        bestRank: careers[s].bestRank, playoffs: careers[s].playoffs, rings: careers[s].rings,
+        years: careers[s].years,
+      }])),
       banked: {},      // seat -> { teamId: { interview, resume, total } }
       decisions: null, // filled in when the offseason resolves
       hired: null,     // { seat, teamId } once someone gets the job
@@ -289,9 +297,8 @@ export function recordInterview(season, seat, teamId, choices) {
     question: q,
     choice: Math.max(0, Math.min(q.options.length - 1, Number(choices[i]) || 0)),
   }));
-  const res = resume(season, seat);
   const iv = interviewScore(answers, opening);
-  const rs = resumeScore(res, opening);
+  const rs = careerScore(careerResume(season, seat), opening);
   const banked = {
     ...c.banked,
     [seat]: { ...(c.banked[seat] || {}), [teamId]: {
@@ -380,7 +387,7 @@ export function advanceOffseason(season, seats = ['OC', 'DC']) {
   }
   // Scouting closes into the draft room, which then runs pick by pick.
   if (stage === 'scouting') return clear(startDraft(season), 'draft');
-  return nextSeason(season);
+  return nextSeason(season, seats);
 }
 
 /* ------------------------------------------------- scouting and the draft */
@@ -590,8 +597,75 @@ function finishDraft(season, picks) {
   return { draftResult: mine, missedTargets: missed };
 }
 
+/**
+ * Fold the season that just ended into a career record. Interviews read this,
+ * so one good year reads differently from four of them — and a coordinator who
+ * has been quietly excellent on a bad club has something to point at.
+ */
+export function archiveSeason(season, seats = ['OC', 'DC']) {
+  const rec = record(season);
+  const champ = season.champion === season.userTeam;
+  const madePlayoffs = !!season.playoffs && [
+    ...(season.playoffs.seeds?.N || []), ...(season.playoffs.seeds?.S || []),
+  ].some((s) => s.id === season.userTeam);
+
+  const years = {};
+  for (const seat of seats) {
+    const r = resume(season, seat);
+    years[seat] = {
+      year: season.year,
+      team: season.userTeam,
+      w: rec.w, l: rec.l, t: rec.t,
+      madePlayoffs, champion: champ,
+      ypp: +r.stats.ypp.toFixed(2),
+      pointsPerGame: +r.stats.pointsPerGame.toFixed(1),
+      third: +r.stats.third.toFixed(3),
+      ranks: r.ranks,
+      gamesCalled: r.gamesCalled,
+      gamesPlayed: r.gamesPlayed,
+    };
+  }
+  const career = { ...(season.career || {}) };
+  for (const seat of seats) career[seat] = [...(career[seat] || []), years[seat]];
+  return career;
+}
+
+/**
+ * A coordinator's whole body of work. Interviews weigh the best years most —
+ * a hiring club forgives a bad year on a bad roster, but it wants to see that
+ * you have done it more than once.
+ */
+export function careerResume(season, seat) {
+  const years = [...(season.career?.[seat] || [])];
+  const current = resume(season, seat);
+  const unit = seat === 'OC' ? 'offense' : 'defense';
+  if (!years.length) {
+    return { seasons: 1, years: [], current,
+      bestRank: current.ranks.points, topFives: current.ranks.points <= 5 ? 1 : 0,
+      totalW: current.record.w, totalL: current.record.l,
+      playoffs: 0, rings: 0, calledPct: current.gamesPlayed
+        ? current.gamesCalled / current.gamesPlayed : 0, unit };
+  }
+  const totalW = years.reduce((a, y) => a + y.w, 0) + current.record.w;
+  const totalL = years.reduce((a, y) => a + y.l, 0) + current.record.l;
+  const ranks = [...years.map((y) => y.ranks.points), current.ranks.points];
+  const called = years.reduce((a, y) => a + y.gamesCalled, 0) + current.gamesCalled;
+  const played = years.reduce((a, y) => a + y.gamesPlayed, 0) + current.gamesPlayed;
+  return {
+    seasons: years.length + 1,
+    years, current, unit,
+    bestRank: Math.min(...ranks),
+    topFives: ranks.filter((r) => r <= 5).length,
+    totalW, totalL,
+    playoffs: years.filter((y) => y.madePlayoffs).length,
+    rings: years.filter((y) => y.champion).length,
+    calledPct: played ? called / played : 0,
+  };
+}
+
 /** Roll the calendar forward and go again. */
-export function nextSeason(season) {
+export function nextSeason(season, seats = ['OC', 'DC']) {
+  const career = archiveSeason(season, seats);
   const ids = TEAMS.map((t) => t.id);
   // Everyone gets a year older, and the rosters you built carry forward.
   const rosters = Object.fromEntries(ids.map((id) =>
@@ -604,6 +678,7 @@ export function nextSeason(season) {
     customPlays: season.customPlays || [],
     customDefenses: season.customDefenses || [],
     rosters,
+    career,
     careerYears: (season.careerYears || 1) + 1,
   });
 }
