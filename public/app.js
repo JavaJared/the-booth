@@ -6,7 +6,7 @@ import { createSeason, advanceWeek, simRemainingWeek, userGame, record as season
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
-  onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS,
+  onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS,
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
   interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
@@ -1092,11 +1092,17 @@ function paneScouting(pane, S, seat) {
   const groups = POSITION_GROUPS[side];
   if (!DZG.group) DZG.group = groups[0].key;
 
-  pane.append(card('Scouting the class',
-    `<p class="scout-note" style="padding:.5rem .6rem 0">${left} of ${SCOUT_POINTS} points left.
-      Each point on a player reveals more of his report; four is everything anyone can know.</p>`
-    + `<p class="scout-note" style="padding:0 .6rem .5rem">Your board: ${boarded.length} of ${BOARD_MAX}.
-      That is the shortlist you will argue for once the draft starts.</p>`));
+  // A meter rather than a sentence: this is the resource the whole stage is
+  // about, and it needs to be readable without hunting for it.
+  const meter = el('section', 'scout-meter');
+  meter.innerHTML = `
+    <div class="meter-big"><b>${left}</b><span>scouting points left</span></div>
+    <div class="meter-bar"><i style="width:${(left / SCOUT_POINTS) * 100}%"></i></div>
+    <div class="meter-side">
+      <span><b>${boarded.length}</b> / ${BOARD_MAX} on your board</span>
+      <span>Four points is everything anyone can know about a player.</span>
+    </div>`;
+  pane.append(meter);
 
   const tabs = el('div', 'tabs grp-tabs');
   for (const g of groups) {
@@ -1108,16 +1114,21 @@ function paneScouting(pane, S, seat) {
   pane.append(tabs);
 
   const group = groups.find((g) => g.key === DZG.group) || groups[0];
+  // Ordered by where the class is projected to go, which is public and fixed.
+  // Sorting by your own scouted grade would shuffle the list every time you
+  // spent a point, and would give away a good report before you read it.
   const list = view.filter((p) => group.pos.includes(p.pos))
-    .sort((a, b) => gradeRank(b.overallHigh) - gradeRank(a.overallHigh) || b.buzz - a.buzz);
+    .sort((a, b) => (a.projected || 999) - (b.projected || 999));
 
   // Late-round targets are the point of a deep board, so show the whole group.
   pane.append(el('p', 'scout-note',
-    `${list.length} in this group. The ones near the bottom are still here in round six.`));
+    `${list.length} in this group, in projected draft order. `
+    + 'Nobody moves on this list when you scout him \u2014 the consensus does not know what you know.'));
   const wrap = el('section', 'prospects');
   for (const p of list) {
     const on = boarded.includes(p.id);
-    const card = el('article', 'prospect' + (on ? ' is-boarded' : ''));
+    const card = el('article', 'prospect' + (on ? ' is-boarded' : '')
+      + (p.scouted ? ' is-scouted' : ''));
     const traits = p.traits.map((t) => t.unknown
       ? `<span class="trait unknown"><b>${t.label}</b><u>?</u></span>`
       : `<span class="trait${t.measured ? ' measured' : ''}"><b>${t.label}</b><u>${
@@ -1128,7 +1139,11 @@ function paneScouting(pane, S, seat) {
       : `<p class="no-combine">Did not work out at the combine.</p>`;
     card.innerHTML = `
       <header>
-        <div><b>${p.pos} ${p.name}</b><span>${p.school} &middot; age ${p.age}</span></div>
+        <div class="who">
+          <span class="proj">R${p.projRound > ROUNDS ? 'FA' : p.projRound}
+            <u>#${p.projected}</u></span>
+          <div><b>${p.pos} ${p.name}</b><span>${p.school} &middot; age ${p.age}</span></div>
+        </div>
         <div class="ovr"><u>${p.overallLow === p.overallHigh ? p.overallLow
           : `${p.overallLow}\u2013${p.overallHigh}`}</u><span>${p.confidence}</span></div>
       </header>
@@ -1217,7 +1232,8 @@ function paneDraft(pane, S, seat) {
       const by = gone ? room.picks.find((x) => x.id === p.id) : null;
       const put = room.pitch?.[p.id] || 0;
       return [
-        `${gone ? '<s>' : ''}${p.pos} ${p.name}${gone ? '</s>' : ''}`,
+        `${gone ? '<s>' : ''}${p.pos} ${p.name}${gone ? '</s>' : ''}`
+          + ` <em class="projtag">#${p.projected}</em>`,
         `${p.overallLow}\u2013${p.overallHigh}`,
         gone ? `<span class="gone">${TEAM_BY_ID[by.team].name} #${by.overall}</span>`
           : put ? `<b class="invited">${put} spent</b>` : 'available',
