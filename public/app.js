@@ -6,7 +6,7 @@ import { createSeason, advanceWeek, simRemainingWeek, userGame, record as season
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
-  onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS,
+  onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS, careerResume,
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
   interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
@@ -664,8 +664,21 @@ async function offerRejoin() {
 offerRejoin();
 
 function saveSeason() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ season: app.season, seat: app.seat })); }
-  catch (e) { /* private browsing or quota — the season still works in memory */ }
+  try {
+    // A shared season lives on the server. Writing a copy here meant that on
+    // return the resume prompt loaded the stale local fork and quietly cut you
+    // off from your rival — the save has to record the code, not the state.
+    if (!link.local && app.seasonId) {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        shared: true, seasonId: app.seasonId, seat: app.seat, name: app.name,
+        team: app.season?.userTeam, week: app.season?.week, at: Date.now(),
+      }));
+      return;
+    }
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      season: app.season, seat: app.seat, at: Date.now(),
+    }));
+  } catch (e) { /* private browsing or quota — the season still works in memory */ }
 }
 function loadSeason() {
   try {
@@ -758,6 +771,7 @@ function watchSeason(fb, seasonId, seat) {
   app.seat = seat;
   link.local = false;
   app.inSeason = true;
+  rememberSeasonCode(seasonId);
   let attached = null;
   fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
     const doc = snap.data();
@@ -787,14 +801,40 @@ function watchSeason(fb, seasonId, seat) {
 
 $('btn-season').addEventListener('click', () => {
   const saved = loadSeason();
+
+  // A shared season resumes by reconnecting, not by loading anything local.
+  if (saved?.shared && saved.seasonId) {
+    modal(`<h2>Season in progress</h2>
+      <p>You were ${weekLabel(saved.week || 1).toLowerCase()} with the
+        ${saved.team ? fullName(saved.team) : 'your club'}, alongside your rival.
+        Rejoining puts you back in the same booth.</p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" data-a="resume">Rejoin</button>
+        <button class="btn" data-a="new">Start a new career</button></div>`, async (act) => {
+      closeModal();
+      if (act !== 'resume') { clearSeason(); pickTeam(); return; }
+      try {
+        const fb = await connectFirebase();
+        app.name = saved.name || nameVal();
+        const r = await fb.fn('joinSeason')({ seasonId: saved.seasonId, displayName: app.name });
+        watchSeason(fb, saved.seasonId, r.data.seat);
+      } catch (e) { setupErr(e.message); clearSeason(); }
+    });
+    return;
+  }
+
   if (saved?.season) {
     modal(`<h2>Season in progress</h2><p>You are ${weekLabel(saved.season.week).toLowerCase()} with the
       ${fullName(saved.season.userTeam)}. Pick up where you left off?</p>
       <div class="modal-actions"><button class="btn btn-primary" data-a="resume">Resume</button>
       <button class="btn" data-a="new">Start fresh</button></div>`, (act) => {
       closeModal();
-      if (act === 'resume') { app.season = saved.season; app.seat = saved.seat || 'OC'; openSeason(); }
-      else { clearSeason(); pickTeam(); }
+      if (act === 'resume') {
+        link.local = true;
+        app.season = hydrate(saved.season);
+        app.seat = saved.seat || 'OC';
+        openSeason();
+      } else { clearSeason(); pickTeam(); }
     });
     return;
   }
@@ -839,7 +879,12 @@ function pickTeam() {
 }
 
 function rememberSeasonCode(id) {
-  try { localStorage.setItem('booth:seasonCode', JSON.stringify({ id, at: Date.now() })); } catch {}
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      shared: true, seasonId: id, seat: app.seat, name: app.name,
+      team: app.season?.userTeam, week: app.season?.week, at: Date.now(),
+    }));
+  } catch {}
 }
 function showSeasonCode(id) {
   modal(`<h2>Send this to your rival</h2>
@@ -1000,11 +1045,12 @@ function paneOffseason(pane, S) {
 
   // ---- what this stage shows
   if (stage === 'openings') {
+    pane.append(careerCard(S, seat));
     pane.append(card('Black Monday',
       `<p class="scout-note">${c.openings.length
         ? `${c.openings.length} club${c.openings.length > 1 ? 's' : ''} changed head coach.`
         : 'Every club kept its coach. Brutal year to be looking.'}</p>`));
-    pane.append(card('Your season', table(['', ''], [
+    pane.append(card('This season', table(['', ''], [
       ['Record', `${R.record.w}\u2013${R.record.l}`],
       [seat === 'OC' ? 'Offense, points' : 'Defense, points allowed', ordinal(R.ranks.points)],
       ['Yards per play', ordinal(R.ranks.ypp)],
@@ -1261,6 +1307,31 @@ function paneDraft(pane, S, seat) {
   pane.append(acts);
 }
 
+/** Everything you have done, which is what a club is actually buying. */
+function careerCard(S, seat) {
+  const c = careerResume(S, seat);
+  const unitLabel = seat === 'OC' ? 'Offense' : 'Defense';
+  if (c.seasons <= 1 && !c.years.length) {
+    return card('Your career', table(['', ''], [
+      ['Seasons as a coordinator', '1'],
+      ['This year', `${c.current.record.w}\u2013${c.current.record.l}`],
+      [`${unitLabel}, points`, ordinal(c.current.ranks.points)],
+    ]) + noteEl('One year is a sample. Clubs want to see you do it again.'));
+  }
+  const rows = c.years.map((y) => [
+    `${y.year}`, `${y.w}\u2013${y.l}`, ordinal(y.ranks.points), y.ypp.toFixed(2),
+    `${y.champion ? '<b class="invited">champion</b>' : y.madePlayoffs ? 'playoffs' : ''}`,
+  ]);
+  rows.push([`${S.year}`, `${c.current.record.w}\u2013${c.current.record.l}`,
+    ordinal(c.current.ranks.points), c.current.stats.ypp.toFixed(2), '<em>this year</em>']);
+  return card(`Your career \u2014 ${c.seasons} season${c.seasons === 1 ? '' : 's'}`,
+    table(['Year', 'Record', `${unitLabel} pts`, 'Y/P', ''], rows)
+    + noteEl(`${c.totalW}\u2013${c.totalL} overall &middot; best unit finish ${ordinal(c.bestRank)}`
+      + ` &middot; ${c.playoffs} playoff berth${c.playoffs === 1 ? '' : 's'}`
+      + (c.rings ? ` &middot; ${c.rings} title${c.rings === 1 ? '' : 's'}` : '')
+      + ` &middot; you called ${Math.round(c.calledPct * 100)}% of your games`));
+}
+
 function vacancyCard(S, seat) {
   const c = S.carousel;
   const invited = new Set(c.invited[seat] || []);
@@ -1335,6 +1406,7 @@ function paneStandings(pane, S) {
 function paneResume(pane, S) {
   const R = resume(S, app.seat);
   const label = app.seat === 'OC' ? 'Offense' : 'Defense';
+  pane.append(careerCard(S, app.seat));
   pane.append(card(`${label} — where you rank`, table(['', 'You', 'League rank'], [
     ['Yards per play', R.stats.ypp.toFixed(2), ordinal(R.ranks.ypp)],
     [app.seat === 'OC' ? 'Points per game' : 'Points allowed', R.stats.pointsPerGame.toFixed(1), ordinal(R.ranks.points)],
