@@ -534,3 +534,27 @@ polygon.dz-zone{fill:var(--los);stroke:none}
 .verdict-big.quiet{color:var(--ink)}
 .gone{color:var(--ink-3);font-family:var(--mono);font-size:.72rem}
 table.scout s{color:var(--ink-3)}
+
+/* the resource the whole stage turns on, made unmissable */
+.scout-meter{display:grid;grid-template-columns:auto 1fr;gap:.4rem 1rem;align-items:center;
+  background:var(--board);border-radius:2px;padding:.85rem 1rem;margin-bottom:1rem}
+.meter-big{display:flex;align-items:baseline;gap:.5rem}
+.meter-big b{font-family:var(--led-face);font-weight:700;font-size:2.4rem;line-height:1;
+  color:var(--led);font-variant-numeric:tabular-nums}
+.meter-big span{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+  font-size:.62rem;font-weight:600;color:var(--led-dim);max-width:6rem;line-height:1.2}
+.meter-bar{height:.55rem;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+.meter-bar i{display:block;height:100%;background:var(--led);transition:width .25s}
+.meter-side{grid-column:1/-1;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+  font-size:.76rem;color:var(--led-dim)}
+.meter-side b{color:var(--led-white);font-weight:600}
+
+/* projected draft slot, the fixed anchor on every card */
+.prospect header .who{display:flex;align-items:flex-start;gap:.7rem;min-width:0}
+.proj{flex:none;text-align:center;font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.08em;font-size:.58rem;font-weight:600;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:2px;padding:.2rem .35rem;min-width:2.6rem}
+.proj u{display:block;text-decoration:none;font-family:var(--mono);font-size:.8rem;
+  color:var(--ink);letter-spacing:0}
+.prospect.is-scouted .proj{border-color:var(--ink)}
+.projtag{font-style:normal;font-family:var(--mono);font-size:.66rem;color:var(--ink-3)}
