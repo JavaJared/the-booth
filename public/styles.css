@@ -558,3 +558,8 @@ table.scout s{color:var(--ink-3)}
   color:var(--ink);letter-spacing:0}
 .prospect.is-scouted .proj{border-color:var(--ink)}
 .projtag{font-style:normal;font-family:var(--mono);font-size:.66rem;color:var(--ink-3)}
+/* a complete report is knowledge, not a narrower guess */
+.ovr.is-exact u{color:var(--ink);background:var(--pencil-soft);border-radius:2px;padding:0 .25rem}
+.ovr.is-exact span{color:var(--pencil)}
+.trait.exact{border-color:var(--ink)}
+.trait.exact u{color:var(--ink)}
