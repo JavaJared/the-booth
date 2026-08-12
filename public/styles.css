@@ -498,3 +498,39 @@ polygon.dz-zone{fill:var(--los);stroke:none}
 .tug-me{display:block;height:100%;background:var(--pencil);transition:width .3s}
 .lobby-actions{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;padding:.6rem}
 .lobby-actions .scout-note{padding:0}
+
+/* ---------- scouting: position groups and prospect cards ---------- */
+.grp-tabs{flex-wrap:wrap;margin-bottom:.9rem;gap:.25rem}
+.grp-tabs .tab i{font-style:normal;color:var(--ink-3);font-size:.62rem;margin-left:.25rem}
+.grp-tabs .tab.is-on{color:var(--paper);background:var(--ink);border-color:var(--ink)}
+.grp-tabs .tab.is-on i{color:var(--hair)}
+.prospects{display:grid;gap:.7rem;margin-bottom:1rem}
+.prospect{background:var(--pad);border:1px solid var(--ink);border-radius:2px;padding:.7rem .8rem}
+.prospect.is-boarded{border-left:3px solid var(--pencil)}
+.prospect header{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
+.prospect header b{font-size:.98rem;font-weight:600;display:block}
+.prospect header span{font-size:.76rem;color:var(--ink-3)}
+.prospect .ovr{text-align:right;flex:none}
+.prospect .ovr u{display:block;text-decoration:none;font-family:var(--cond);font-weight:700;
+  font-size:1.35rem;letter-spacing:.02em;color:var(--pencil)}
+.prospect .ovr span{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+  font-size:.58rem;font-weight:600;color:var(--ink-3)}
+.traits{display:flex;flex-wrap:wrap;gap:.3rem;margin:.6rem 0 .5rem}
+.trait{display:inline-flex;align-items:baseline;gap:.35rem;border:1px solid var(--hair);
+  border-radius:2px;padding:.15rem .4rem}
+.trait b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.07em;
+  font-size:.6rem;font-weight:600;color:var(--ink-3)}
+.trait u{text-decoration:none;font-family:var(--mono);font-size:.76rem;font-weight:600}
+.trait.unknown{opacity:.45}
+.trait.measured{border-color:var(--los)}
+.trait.measured u{color:var(--los)}
+.combine{display:flex;flex-wrap:wrap;gap:.7rem;border-top:1px solid var(--hair);
+  padding-top:.45rem;font-family:var(--mono);font-size:.72rem;color:var(--ink-2)}
+.combine b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em;
+  font-size:.58rem;color:var(--ink-3);font-weight:600;margin-right:.2rem}
+.no-combine{margin:.3rem 0 0;font-family:var(--hand);font-size:1rem;color:var(--ink-3);
+  border-top:1px solid var(--hair);padding-top:.4rem}
+.prospect-acts{display:flex;gap:.35rem;margin-top:.55rem}
+.verdict-big.quiet{color:var(--ink)}
+.gone{color:var(--ink-3);font-family:var(--mono);font-size:.72rem}
+table.scout s{color:var(--ink-3)}
