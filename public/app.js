@@ -11,6 +11,7 @@ import { createSeason, advanceWeek, simRemainingWeek, userGame, record as season
   interviewQuestions } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { POSITION_GROUPS, DRILL_LABEL, gradeRank } from './shared/draft.js';
+import { depthChart, rosterNeeds, unitSummary as rosterUnit } from './shared/depth.js';
 import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute,
   OL_SPOTS, runSpots, DEF_ALIGN, deriveRun, deriveDefense, readRun, readDefense } from './shared/designer.js';
 import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.js';
@@ -915,7 +916,8 @@ function renderSeason() {
   const pane = $('season-pane');
   pane.innerHTML = '';
   if ((S.phase === 'offseason' || S.phase === 'hired') && tab === 'week') paneOffseason(pane, S);
-  else ({ week: paneWeek, standings: paneStandings, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
+  else ({ week: paneWeek, standings: paneStandings, roster: paneRoster,
+    resume: paneResume, bracket: paneBracket }[tab])(pane, S);
   saveSeason();
 }
 
@@ -1402,6 +1404,86 @@ function paneStandings(pane, S) {
     pane.append(wrap);
   }
 }
+
+/* ---------- the depth chart ----------
+   Both units, because a coordinator argues for his own side but has to know
+   what the club as a whole is short of. */
+
+function paneRoster(pane, S) {
+  const mySide = app.seat === 'OC' ? 'offense' : 'defense';
+  if (!ROS.side) ROS.side = mySide;
+
+  const tabs = el('div', 'tabs grp-tabs');
+  for (const [key, label] of [['offense', 'Offense'], ['defense', 'Defense']]) {
+    const b = el('button', 'tab' + (ROS.side === key ? ' is-on' : ''),
+      label + (key === mySide ? ' <i>yours</i>' : ''));
+    b.addEventListener('click', () => { ROS.side = key; renderSeason(); });
+    tabs.append(b);
+  }
+  pane.append(tabs);
+
+  const side = ROS.side;
+  const rows = depthChart(S, side);
+  const u = rosterUnit(S, side);
+
+  pane.append(card('Unit at a glance', table(['', ''], [
+    ['Average rating', `${u.average}`],
+    ['Weakest spots', u.holes.length
+      ? u.holes.map((h) => `${h.pos} (${h.rating})`).join(', ') : 'nothing glaring'],
+    ['Players 31 or older', `${u.agingCount}`],
+    ['Players 23 or younger', `${u.youngCount}`],
+  ]) + noteEl(side === mySide
+    ? 'This is the unit you are judged on. Holes here are what your scouting should chase.'
+    : 'Not your side of the ball, but the club drafts for both.')));
+
+  // Group by position so the depth chart reads as a depth chart.
+  const groups = [];
+  for (const r of rows) {
+    let g = groups.find((x) => x.pos === r.pos);
+    if (!g) { g = { pos: r.pos, players: [] }; groups.push(g); }
+    g.players.push(r);
+  }
+
+  const box = el('section', 'depth');
+  for (const g of groups) {
+    const grp = el('div', 'depth-group', `<h4>${g.pos}</h4>`);
+    g.players.forEach((p, i) => {
+      const stat = side === 'offense'
+        ? (p.att ? `${p.comp}/${p.att}, ${p.passYards} yds, ${p.passTD} TD, ${p.int} INT`
+          : p.carries ? `${p.carries} car, ${p.rushYards} yds, ${p.rushTD} TD`
+            + (p.targets ? ` &middot; ${p.rec} rec, ${p.recYards} yds` : '')
+          : p.targets ? `${p.rec}/${p.targets}, ${p.recYards} yds, ${p.recTD} TD`
+          : 'no counting stats')
+        : `${p.tackles} tkl &middot; ${p.sacks} sk &middot; ${p.pbu} PBU &middot; ${p.ints} INT`;
+      const row = el('div', 'depth-row' + (i === 0 ? ' is-starter' : ''));
+      row.innerHTML = `
+        <span class="slot">${i === 0 ? 'ST' : i + 1}</span>
+        <span class="num">${p.number ?? ''}</span>
+        <span class="who"><b>${p.name}</b>${p.rookie ? ' <em class="rk">R</em>' : ''}
+          <span>age ${p.age}</span></span>
+        <span class="rate ${p.rating >= 85 ? 'good' : p.rating < 65 ? 'bad' : ''}">${p.rating}</span>
+        <span class="line">${stat}</span>`;
+      grp.append(row);
+    });
+    box.append(grp);
+  }
+  pane.append(box);
+
+  // Always show the five thinnest spots, even on a good unit — a coordinator
+  // still wants to know where he is least strong before the draft.
+  const ranked = rosterNeeds(S, side).slice(0, 5);
+  const below = ranked.filter((r) => r.gap > 0).length;
+  pane.append(card(below ? 'Where you are short' : 'Your thinnest spots',
+    table(['', 'Rating', 'Age', 'Against par'], ranked.map((r) =>
+      [`${r.pos} ${r.name}`, `${r.rating}`, `${r.age}`,
+       `<span class="gap ${r.gap > 5 ? 'bad' : r.gap < -5 ? 'good' : ''}">${
+         r.gap > 0 ? '\u2212' : '+'}${Math.abs(r.gap).toFixed(1)}</span>`]))
+    + noteEl(below
+      ? 'Measured against what the position is normally worth around the league. These are what your scouting should chase.'
+      : 'Nothing here grades below par, so the draft is about raising the ceiling rather than filling a hole.')));
+}
+
+const ROS = { side: null };
 
 function paneResume(pane, S) {
   const R = resume(S, app.seat);
