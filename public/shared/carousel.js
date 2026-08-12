@@ -153,6 +153,36 @@ export function openingFor(teamId, season, coaches) {
  * 0–100, and deliberately weighted toward unit rank over team record: you do
  * not control the other side of the ball.
  */
+/**
+ * A body of work, not a single year. Clubs weigh your best season heavily —
+ * they are buying the ceiling — but sustained quality and a playoff record
+ * separate a coordinator with one good year from one you can trust.
+ */
+export function careerScore(career, opening) {
+  const one = resumeScore(career.current, opening);
+  if (!career.years?.length) return one;
+
+  const past = career.years.map((y) => resumeScore({
+    unit: career.unit,
+    record: { w: y.w, l: y.l, t: y.t },
+    gamesPlayed: y.gamesPlayed, gamesCalled: y.gamesCalled,
+    stats: { ypp: y.ypp, pointsPerGame: y.pointsPerGame, third: y.third },
+    ranks: y.ranks,
+  }, opening));
+
+  const all = [...past, one];
+  const best = Math.max(...all);
+  const mean = all.reduce((a, b) => a + b, 0) / all.length;
+  // This year still matters most — you are hired on what you just did — but a
+  // long good record lifts you and one fluke season does not carry you.
+  let score = 0.45 * one + 0.32 * best + 0.23 * mean;
+  score += Math.min(6, career.playoffs * 2.5);
+  score += career.rings * 5;
+  score += Math.min(5, Math.max(0, career.seasons - 1) * 1.6);   // experience
+  if (career.topFives >= 2) score += 4;
+  return Math.max(0, Math.min(100, +score.toFixed(1)));
+}
+
 export function resumeScore(res, opening) {
   const rankPoints = (r) => Math.max(0, (33 - r) / 32) * 100;
   const unit = 0.45 * rankPoints(res.ranks.points) + 0.35 * rankPoints(res.ranks.ypp)
