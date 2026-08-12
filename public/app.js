@@ -1131,7 +1131,7 @@ function paneScouting(pane, S, seat) {
       + (p.scouted ? ' is-scouted' : ''));
     const traits = p.traits.map((t) => t.unknown
       ? `<span class="trait unknown"><b>${t.label}</b><u>?</u></span>`
-      : `<span class="trait${t.measured ? ' measured' : ''}"><b>${t.label}</b><u>${
+      : `<span class="trait${t.measured ? ' measured' : ''}${p.exact ? ' exact' : ''}"><b>${t.label}</b><u>${
           t.low === t.high ? t.low : `${t.low}\u2013${t.high}`}</u></span>`).join('');
     const combine = p.combine
       ? `<div class="combine">${Object.entries(p.combine)
@@ -1144,7 +1144,7 @@ function paneScouting(pane, S, seat) {
             <u>#${p.projected}</u></span>
           <div><b>${p.pos} ${p.name}</b><span>${p.school} &middot; age ${p.age}</span></div>
         </div>
-        <div class="ovr"><u>${p.overallLow === p.overallHigh ? p.overallLow
+        <div class="ovr${p.exact ? ' is-exact' : ''}"><u>${p.overallLow === p.overallHigh ? p.overallLow
           : `${p.overallLow}\u2013${p.overallHigh}`}</u><span>${p.confidence}</span></div>
       </header>
       <div class="traits">${traits}</div>
