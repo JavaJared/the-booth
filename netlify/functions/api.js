@@ -11,8 +11,8 @@ import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } fro
 import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   simRemainingWeek, advanceWeek, startOffseason, recordInterview,
   setOffseasonReady, advanceOffseason, canReady, bothReady,
-  openScouting, useScout, pushSide, pushPlayer, signFreeAgent, boardViews,
-  runDraft } from '../../public/shared/season.js';
+  openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
+  startDraft, advocate, runPicks, isOurPick } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 
 class ApiError extends Error {
@@ -297,22 +297,43 @@ const actions = {
     return { left: next.scoutLeft[seat] };
   },
 
-  async pushSide(uid, { seasonId, amount = 1 }) {
+  async toggleBoard(uid, { seasonId, prospectId }) {
     const { seat, season } = await loadSeason(seasonId, uid);
     if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
-    const next = pushSide(season, seat, Math.max(1, Math.min(6, Number(amount) || 1)));
-    if (next === season) throw new ApiError(409, 'You are out of influence.');
-    await seasonRef(seasonId).update({ influence: next.influence, lobby: next.lobby });
-    return { influence: next.influence[seat] };
+    const next = toggleBoard(season, seat, prospectId);
+    if (next === season) throw new ApiError(409, 'Not your side of the ball, or your board is full.');
+    await seasonRef(seasonId).update({ draftBoard: next.draftBoard });
+    return { board: next.draftBoard[seat] };
   },
 
-  async pushPlayer(uid, { seasonId, prospectId }) {
-    const { seat, season } = await loadSeason(seasonId, uid);
-    if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
-    const next = pushPlayer(season, seat, prospectId);
-    if (next === season) throw new ApiError(409, 'Not your side of the ball, or not enough influence.');
-    await seasonRef(seasonId).update({ influence: next.influence, lobby: next.lobby });
-    return { influence: next.influence[seat] };
+  /* ---------------------------------------------------- the draft room */
+
+  async advocate(uid, { seasonId, prospectId, amount = 1 }) {
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'draft') throw new ApiError(409, 'The draft is not open.');
+    const priv = await loadBoard(seasonId);
+    const withBoard = { ...season, board: priv?.board || [] };
+    if (!isOurPick(withBoard)) throw new ApiError(409, 'Your club is not on the clock.');
+    const next = advocate(withBoard, seat, prospectId, amount);
+    if (next === withBoard) throw new ApiError(409, 'Out of advocacy, or not your side of the ball.');
+    await seasonRef(seasonId).update({ advocacy: next.advocacy, draftRoom: next.draftRoom });
+    return { left: next.advocacy[seat] };
+  },
+
+  /** Advance the draft. Anyone in the room can run it on. */
+  async runPicks(uid, { seasonId, makeOurs }) {
+    const { doc, season } = await loadSeason(seasonId, uid);
+    if (season.carousel?.stage !== 'draft') throw new ApiError(409, 'The draft is not open.');
+    const priv = await loadBoard(seasonId);
+    if (!priv) throw new ApiError(409, 'The board is gone.');
+    const next = runPicks({ ...season, board: priv.board }, { makeOurs: !!makeOurs });
+    const seats = seatsIn(doc);
+    const { board, draftSeed, ...pub } = next;
+    // Once the draft is done the truth is safe to publish; that is the payoff.
+    await seasonRef(seasonId).update({
+      ...dehydrate(pub), ...boardViews(priv.board, seats, !!next.draftRoom?.done),
+    });
+    return { cursor: next.draftRoom.cursor, done: !!next.draftRoom.done };
   },
 
   async signFreeAgent(uid, { seasonId, faId }) {
@@ -351,13 +372,13 @@ const actions = {
       return { stage: 'scouting', phase: opened.phase };
     }
     if (stage === 'scouting') {
+      // Scouting closes; the room opens with nobody picked yet.
       const priv = await loadBoard(seasonId);
-      const drafted = runDraft({ ...next, board: priv?.board || [] }, seats);
-      drafted.carousel = { ...drafted.carousel, stage: 'draft', ready: {} };
-      const { board, draftSeed, ...pub } = drafted;
-      await privateRef(seasonId).set({ board, draftSeed: priv?.draftSeed || null });
-      await seasonRef(seasonId).update({ ...dehydrate(pub), ...boardViews(board, seats) });
-      return { stage: 'draft', phase: drafted.phase };
+      const opened = startDraft({ ...next, board: priv?.board || [] });
+      opened.carousel = { ...opened.carousel, stage: 'draft', ready: {} };
+      const { board, draftSeed, ...pub } = opened;
+      await seasonRef(seasonId).update({ ...dehydrate(pub), ...boardViews(priv.board, seats) });
+      return { stage: 'draft', phase: opened.phase };
     }
 
     next = advanceOffseason(next, seats);
