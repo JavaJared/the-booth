@@ -9,8 +9,8 @@ import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
 import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
-import { makeClass, makeFreeAgents, draftOrder, cpuPick, gmPick, addToRoster, ageRoster,
-  scout, scoutView, ROUNDS, SCOUT_POINTS, INFLUENCE } from './draft.js';
+import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
+  scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
 import { makeCoaches, firings, openingFor, resumeScore, invitesFor,
   interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
 
@@ -268,6 +268,7 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
 }
 
 export const OFFSEASON_STAGES = ['openings', 'interviews', 'decisions', 'scouting', 'draft'];
+export { ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS };
 
 /**
  * Bank an interview without revealing anything. Clubs decide once both
@@ -377,7 +378,8 @@ export function advanceOffseason(season, seats = ['OC', 'DC']) {
     if (season.carousel.hired) return { ...season, phase: 'hired' };
     return clear(openScouting(season), 'scouting');
   }
-  if (stage === 'scouting') return clear(runDraft(season, seats), 'draft');
+  // Scouting closes into the draft room, which then runs pick by pick.
+  if (stage === 'scouting') return clear(startDraft(season), 'draft');
   return nextSeason(season);
 }
 
@@ -389,18 +391,16 @@ export function advanceOffseason(season, seats = ['OC', 'DC']) {
  * the range their own scouting has earned. Deriving the class from the public
  * season seed would let anyone regenerate it and read the answers.
  */
-export function boardViews(board, seats = ['OC', 'DC']) {
-  const pub = board.map((p) => ({
-    id: p.id, name: p.name, pos: p.pos, side: p.side, age: p.age, buzz: p.buzz,
-  }));
+export function boardViews(board, seats = ['OC', 'DC'], reveal = false) {
   const views = {};
   for (const seat of seats) {
     const mine = seat === 'OC' ? 'offense' : 'defense';
-    views[seat] = Object.fromEntries(board.map((p) => [p.id,
-      // You only get a read on your own side of the ball.
-      p.side === mine ? scoutView(p) : scoutView({ ...p, scouted: 0 })]));
+    views[seat] = board.map((p) => scoutReport(
+      // You get no read at all on the other coordinator's side of the ball.
+      p.side === mine ? p : { ...p, scouted: 0 },
+      { reveal }));
   }
-  return { boardPublic: pub, boardView: views };
+  return { boardView: views };
 }
 
 export function openScouting(season, secret = null) {
@@ -412,14 +412,15 @@ export function openScouting(season, secret = null) {
   const board = makeClass(draftSeed, season.year, used);
   return {
     ...season,
-    draftSeed: secret ? undefined : draftSeed,   // omitted when it must stay secret
+    draftSeed: secret ? undefined : draftSeed,
     board,
     ...boardViews(board),
     freeAgents: makeFreeAgents(draftSeed, season.year, used),
     scoutLeft: { OC: SCOUT_POINTS, DC: SCOUT_POINTS },
-    influence: { OC: INFLUENCE, DC: INFLUENCE },
-    lobby: { OC: 0, DC: 0, table: {} },
+    advocacy: { OC: ADVOCACY, DC: ADVOCACY },
+    draftBoard: { OC: [], DC: [] },
     signed: {},
+    draftRoom: null,
   };
 }
 
@@ -435,6 +436,18 @@ export function useScout(season, seat, prospectId) {
     ...boardViews(board),
     scoutLeft: { ...season.scoutLeft, [seat]: left - 1 },
   };
+}
+
+/** Put a prospect on your own board — the shortlist you will argue for. */
+export function toggleBoard(season, seat, prospectId) {
+  const side = seat === 'OC' ? 'offense' : 'defense';
+  const p = (season.boardView?.[seat] || []).find((x) => x.id === prospectId);
+  if (!p || p.side !== side) return season;
+  const cur = season.draftBoard?.[seat] || [];
+  const next = cur.includes(prospectId)
+    ? cur.filter((i) => i !== prospectId)
+    : (cur.length >= BOARD_MAX ? cur : [...cur, prospectId]);
+  return { ...season, draftBoard: { ...season.draftBoard, [seat]: next } };
 }
 
 /** Sign one veteran, per coordinator, for their own unit. */
@@ -456,79 +469,128 @@ export function signFreeAgent(season, seat, faId) {
  * Run the whole draft. Your club takes whoever each coordinator has queued for
  * their side; every other club picks for itself.
  */
-export function runDraft(season, seats = ['OC', 'DC']) {
-  const rng = mulberry32(hashSeed(`${season.seed}:draftrun:${season.year}`));
-  const order = draftOrder(season);
-  const rosters = JSON.parse(JSON.stringify(season.rosters));
-  const available = [...(season.board || [])];
-  const mine = [];
-  // The tug of war: whichever coordinator leaned harder tilts the room.
-  const lobby = {
-    side: (season.lobby?.OC || 0) - (season.lobby?.DC || 0),
-    table: [...(season.lobby?.table?.OC || []), ...(season.lobby?.table?.DC || [])],
-  };
+/* ------------------------------------------------------------ draft room */
 
-  for (const pick of order) {
-    if (!available.length) break;
-    const chosen = pick.team === season.userTeam
-      ? gmPick(available, rosters[pick.team], season.seed, rng, lobby)
-      : cpuPick(available, rosters[pick.team], rng);
-    available.splice(available.indexOf(chosen), 1);
-    const res = addToRoster(rosters[pick.team], chosen);
-    rosters[pick.team] = res.roster;
-    if (pick.team === season.userTeam) {
-      mine.push({ ...chosen, round: pick.round, overall: pick.overall,
-        started: res.kept, replaced: res.replaced?.name || null,
-        pounded: lobby.table.includes(chosen.id) });
-    }
-  }
-  // What you argued for and did not get is half the story.
-  const missed = [...(season.lobby?.table?.OC || []), ...(season.lobby?.table?.DC || [])]
-    .filter((id) => !mine.some((m) => m.id === id))
-    .map((id) => (season.board || []).find((p) => p.id === id))
-    .filter(Boolean);
-  // Once the picks are in, the truth is safe to show — that is the whole payoff.
-  return { ...season, rosters, draftResult: mine,
-    missedTargets: missed.map((p) => ({ ...p, revealed: p.rating })),
-    board: available, ...boardViews(available) };
+/** Open the room. Nothing is picked yet; the clock is on the first selection. */
+export function startDraft(season) {
+  return {
+    ...season,
+    draftRoom: {
+      order: draftOrder(season),
+      cursor: 0,
+      picks: [],              // every selection made, league wide
+      pitch: {},              // advocacy spent on the pick currently on the clock
+      lastPick: null,
+    },
+  };
+}
+
+export const onTheClock = (season) => {
+  const r = season.draftRoom;
+  return r && r.cursor < r.order.length ? r.order[r.cursor] : null;
+};
+export const isOurPick = (season) => onTheClock(season)?.team === season.userTeam;
+
+/** Spend advocacy on a prospect for the pick currently on the clock. */
+export function advocate(season, seat, prospectId, amount = 1) {
+  const room = season.draftRoom;
+  if (!room || !isOurPick(season)) return season;
+  const left = season.advocacy?.[seat] ?? 0;
+  const amt = Math.max(1, Math.min(left, Number(amount) || 1));
+  if (left < 1) return season;
+  const side = seat === 'OC' ? 'offense' : 'defense';
+  const p = (season.boardView?.[seat] || []).find((x) => x.id === prospectId)
+    || (season.board || []).find((x) => x.id === prospectId);
+  if (!p || p.side !== side) return season;
+  if (room.picks.some((x) => x.id === prospectId)) return season;   // already gone
+  return {
+    ...season,
+    advocacy: { ...season.advocacy, [seat]: left - amt },
+    draftRoom: { ...room,
+      pitch: { ...room.pitch, [prospectId]: (room.pitch[prospectId] || 0) + amt },
+      pitchBy: { ...(room.pitchBy || {}), [prospectId]: seat } },
+  };
 }
 
 /**
- * Lean on the general manager for your side of the ball. You are competing for
- * his ear with the other coordinator, and neither of you gets to pick.
+ * Run selections until our club is on the clock again, or the draft ends.
+ * Every other club picks for itself; ours goes through the general manager,
+ * who weighs whatever advocacy was spent.
  */
-export function pushSide(season, seat, amount = 1) {
-  const left = season.influence?.[seat] ?? 0;
-  if (left < amount) return season;
+export function runPicks(season, opts = {}) {
+  const room = season.draftRoom;
+  if (!room) return season;
+  const rosters = JSON.parse(JSON.stringify(season.rosters));
+  const taken = new Set(room.picks.map((p) => p.id));
+  let available = (season.board || []).filter((p) => !taken.has(p.id));
+  const picks = [...room.picks];
+  let cursor = room.cursor;
+  let pitch = { ...room.pitch };
+  let pitchBy = { ...(room.pitchBy || {}) };
+  let lastPick = room.lastPick;
+  let ours = 0;
+
+  while (cursor < room.order.length && available.length) {
+    const slot = room.order[cursor];
+    const mine = slot.team === season.userTeam;
+    // Stop at our pick unless we were told to make it.
+    if (mine && !(opts.makeOurs && ours === 0)) break;
+
+    const rng = mulberry32(hashSeed(`${season.seed}:pick:${slot.overall}`));
+    let chosen, gmBoard = null;
+    if (mine) {
+      const res = makePick(available, rosters[slot.team], season.seed, rng, pitch);
+      chosen = res.pick;
+      gmBoard = res.board.map((b) => ({ id: b.p.id, name: b.p.name, pos: b.p.pos }));
+      ours++;
+    } else {
+      chosen = cpuPick(available, rosters[slot.team], rng);
+    }
+
+    available = available.filter((p) => p.id !== chosen.id);
+    const res = addToRoster(rosters[slot.team], chosen);
+    rosters[slot.team] = res.roster;
+    const entry = {
+      id: chosen.id, name: chosen.name, pos: chosen.pos, side: chosen.side,
+      school: chosen.school, team: slot.team, round: slot.round, overall: slot.overall,
+      mine, rating: mine ? chosen.rating : null,
+      started: mine ? res.kept : null,
+      advocated: pitch[chosen.id] || 0,
+      advocatedBy: pitchBy[chosen.id] || null,
+    };
+    picks.push(entry);
+    if (mine) {
+      lastPick = { ...entry, gmBoard, spent: Object.values(pitch).reduce((a, b) => a + b, 0) };
+      pitch = {}; pitchBy = {};    // advocacy does not carry to the next pick
+    }
+    cursor++;
+    if (mine) break;
+  }
+
+  const done = cursor >= room.order.length || !available.length;
   return {
-    ...season,
-    influence: { ...season.influence, [seat]: left - amount },
-    lobby: { ...season.lobby, [seat]: (season.lobby?.[seat] || 0) + amount },
+    ...season, rosters,
+    draftRoom: { ...room, cursor, picks, pitch, pitchBy, lastPick, done },
+    ...(done ? finishDraft(season, picks) : {}),
   };
 }
 
-/** Pound the table for one prospect. Costs more, moves him further. */
-export function pushPlayer(season, seat, prospectId) {
-  const side = seat === 'OC' ? 'offense' : 'defense';
-  const p = (season.boardPublic || season.board || []).find((x) => x.id === prospectId);
-  if (!p || p.side !== side) return season;
-  const table = { ...(season.lobby?.table || {}) };
-  const mine = table[seat] || [];
-  if (mine.includes(prospectId)) {
-    // Backing off refunds what it cost.
-    table[seat] = mine.filter((i) => i !== prospectId);
-    return { ...season,
-      influence: { ...season.influence, [seat]: (season.influence[seat] || 0) + 2 },
-      lobby: { ...season.lobby, table } };
-  }
-  if ((season.influence?.[seat] ?? 0) < 2) return season;
-  table[seat] = [...mine, prospectId];
-  return { ...season,
-    influence: { ...season.influence, [seat]: season.influence[seat] - 2 },
-    lobby: { ...season.lobby, table } };
+function finishDraft(season, picks) {
+  const mine = picks.filter((p) => p.mine);
+  const boarded = [...(season.draftBoard?.OC || []), ...(season.draftBoard?.DC || [])];
+  const missed = boarded
+    .filter((id) => !mine.some((m) => m.id === id))
+    .map((id) => {
+      const p = (season.board || []).find((x) => x.id === id);
+      const by = picks.find((x) => x.id === id);
+      return p ? { id, name: p.name, pos: p.pos, side: p.side,
+        trueGrade: p.rating, takenBy: by?.team || null, overall: by?.overall || null } : null;
+    })
+    .filter(Boolean);
+  return { draftResult: mine, missedTargets: missed };
 }
 
-/** Nobody got a job. Roll the calendar forward and go again. */
+/** Roll the calendar forward and go again. */
 export function nextSeason(season) {
   const ids = TEAMS.map((t) => t.id);
   // Everyone gets a year older, and the rosters you built carry forward.
