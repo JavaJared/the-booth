@@ -170,7 +170,16 @@ export function makeClass(seed, year, used = new Set()) {
       buzz: Math.round(clamp(rating + gauss(rng, 0, noise), 40, 99)),
     });
   }
-  return out.sort((a, b) => b.buzz - a.buzz);
+  // Rank the class by public buzz once, at creation. This is the consensus
+  // board: it never moves, no matter what your scouts turn up. Sorting by your
+  // own findings would leak the answer — a player who jumped up the list after
+  // one look would be telling you he is good before you read the report.
+  out.sort((a, b) => b.buzz - a.buzz);
+  out.forEach((p, i) => {
+    p.projected = i + 1;
+    p.projRound = Math.min(ROUNDS + 1, Math.floor(i / 32) + 1);
+  });
+  return out;
 }
 
 export function makeFreeAgents(seed, year, used = new Set()) {
@@ -229,7 +238,7 @@ export function scoutReport(p, opts = {}) {
   const centre = p.buzz + (p.rating - p.buzz) * pull * 0.94;
   return {
     id: p.id, name: p.name, pos: p.pos, side: p.side, school: p.school, age: p.age,
-    buzz: p.buzz,
+    buzz: p.buzz, projected: p.projected, projRound: p.projRound,
     overallLow: grade(clamp(centre - band, 25, 99)),
     overallHigh: grade(clamp(centre + band, 25, 99)),
     traits,
