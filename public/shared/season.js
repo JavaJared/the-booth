@@ -555,7 +555,7 @@ export function runPicks(season, opts = {}) {
     }
 
     available = available.filter((p) => p.id !== chosen.id);
-    const res = addToRoster(rosters[slot.team], chosen);
+    const res = addToRoster(rosters[slot.team], { ...chosen, draftedIn: season.year });
     rosters[slot.team] = res.roster;
     const entry = {
       id: chosen.id, name: chosen.name, pos: chosen.pos, side: chosen.side,
