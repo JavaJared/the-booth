@@ -1428,7 +1428,7 @@ function paneRoster(pane, S) {
 
   pane.append(card('Unit at a glance', table(['', ''], [
     ['Average rating', `${u.average}`],
-    ['Weakest spots', u.holes.length
+    ['Weakest positions', u.holes.length
       ? u.holes.map((h) => `${h.pos} (${h.rating})`).join(', ') : 'nothing glaring'],
     ['Players 31 or older', `${u.agingCount}`],
     ['Players 23 or younger', `${u.youngCount}`],
@@ -1474,12 +1474,12 @@ function paneRoster(pane, S) {
   const ranked = rosterNeeds(S, side).slice(0, 5);
   const below = ranked.filter((r) => r.gap > 0).length;
   pane.append(card(below ? 'Where you are short' : 'Your thinnest spots',
-    table(['', 'Rating', 'Age', 'Against par'], ranked.map((r) =>
-      [`${r.pos} ${r.name}`, `${r.rating}`, `${r.age}`,
-       `<span class="gap ${r.gap > 5 ? 'bad' : r.gap < -5 ? 'good' : ''}">${
+    table(['Position', 'Starters', 'Oldest', 'Depth', 'Against par'], ranked.map((r) =>
+      [r.pos, `${r.rating}`, `${r.age}`, `${r.depth}`,
+       `<span class="gap ${r.gap > 4 ? 'bad' : r.gap < -4 ? 'good' : ''}">${
          r.gap > 0 ? '\u2212' : '+'}${Math.abs(r.gap).toFixed(1)}</span>`]))
     + noteEl(below
-      ? 'Measured against what the position is normally worth around the league. These are what your scouting should chase.'
+      ? 'Starters averaged and measured against what the position is normally worth. These are what your scouting should chase.'
       : 'Nothing here grades below par, so the draft is about raising the ceiling rather than filling a hole.')));
 }
 
