@@ -6,29 +6,73 @@ import { mulberry32, hashSeed } from './engine.js';
 import { FIRST, LAST, RESERVED } from './names.js';
 
 // role: how the position is used. base: rating centre. spread: how much it varies.
+/**
+ * A real depth chart. The first man at each position is the starter the play
+ * engine reads; everyone behind him is depth that matters for the draft, for
+ * ageing, and for knowing where the roster is thin. `key` marks the spots the
+ * engine actually resolves plays with.
+ */
 export const OFF_SPOTS = [
-  { id: 'QB',  label: 'QB',  base: 78, spread: 8, nums: [[1, 19]] },
-  { id: 'RB1', label: 'RB',  base: 77, spread: 8, nums: [[20, 39]] },
-  { id: 'RB2', label: 'RB',  base: 70, spread: 7, nums: [[20, 39]] },
-  { id: 'WR1', label: 'WR',  base: 81, spread: 8, nums: [[10, 19], [80, 89]] },
-  { id: 'WR2', label: 'WR',  base: 75, spread: 8, nums: [[10, 19], [80, 89]] },
-  { id: 'WR3', label: 'WR',  base: 71, spread: 8, nums: [[10, 19], [80, 89]] },
-  { id: 'TE1', label: 'TE',  base: 75, spread: 8, nums: [[40, 49], [84, 89]] },
-  { id: 'TE2', label: 'TE',  base: 67, spread: 7, nums: [[40, 49], [84, 89]] },
-  { id: 'OL',  label: 'OL',  base: 76, spread: 6, nums: [[60, 79]] },
+  { id: 'QB',  label: 'QB',  base: 78, spread: 8, nums: [[1, 19]], key: true },
+  { id: 'QB2', label: 'QB',  base: 66, spread: 8, nums: [[1, 19]] },
+  { id: 'QB3', label: 'QB',  base: 58, spread: 7, nums: [[1, 19]] },
+  { id: 'RB1', label: 'RB',  base: 77, spread: 8, nums: [[20, 39]], key: true },
+  { id: 'RB2', label: 'RB',  base: 70, spread: 7, nums: [[20, 39]], key: true },
+  { id: 'RB3', label: 'RB',  base: 63, spread: 7, nums: [[20, 39]] },
+  { id: 'FB',  label: 'RB',  base: 66, spread: 6, nums: [[40, 49]] },
+  { id: 'WR1', label: 'WR',  base: 81, spread: 8, nums: [[10, 19], [80, 89]], key: true },
+  { id: 'WR2', label: 'WR',  base: 75, spread: 8, nums: [[10, 19], [80, 89]], key: true },
+  { id: 'WR3', label: 'WR',  base: 71, spread: 8, nums: [[10, 19], [80, 89]], key: true },
+  { id: 'WR4', label: 'WR',  base: 66, spread: 8, nums: [[10, 19], [80, 89]] },
+  { id: 'WR5', label: 'WR',  base: 61, spread: 7, nums: [[10, 19], [80, 89]] },
+  { id: 'WR6', label: 'WR',  base: 57, spread: 7, nums: [[10, 19], [80, 89]] },
+  { id: 'TE1', label: 'TE',  base: 75, spread: 8, nums: [[40, 49], [84, 89]], key: true },
+  { id: 'TE2', label: 'TE',  base: 67, spread: 7, nums: [[40, 49], [84, 89]], key: true },
+  { id: 'TE3', label: 'TE',  base: 60, spread: 7, nums: [[40, 49], [84, 89]] },
+  { id: 'OL',  label: 'OL',  base: 76, spread: 6, nums: [[60, 79]], key: true },
+  { id: 'OL2', label: 'OL',  base: 75, spread: 6, nums: [[60, 79]] },
+  { id: 'OL3', label: 'OL',  base: 74, spread: 6, nums: [[60, 79]] },
+  { id: 'OL4', label: 'OL',  base: 73, spread: 6, nums: [[60, 79]] },
+  { id: 'OL5', label: 'OL',  base: 72, spread: 6, nums: [[60, 79]] },
+  { id: 'OL6', label: 'OL',  base: 65, spread: 6, nums: [[60, 79]] },
+  { id: 'OL7', label: 'OL',  base: 62, spread: 6, nums: [[60, 79]] },
+  { id: 'OL8', label: 'OL',  base: 58, spread: 6, nums: [[60, 79]] },
+  { id: 'OL9', label: 'OL',  base: 55, spread: 6, nums: [[60, 79]] },
+  { id: 'K',   label: 'K',   base: 74, spread: 7, nums: [[1, 9]] },
+  { id: 'P',   label: 'P',   base: 72, spread: 7, nums: [[1, 9]] },
 ];
 export const DEF_SPOTS = [
-  { id: 'EDGE1', label: 'EDGE', base: 79, spread: 8, nums: [[50, 59], [90, 99]] },
-  { id: 'EDGE2', label: 'EDGE', base: 73, spread: 8, nums: [[50, 59], [90, 99]] },
-  { id: 'DT',    label: 'DT',   base: 76, spread: 7, nums: [[60, 79], [90, 99]] },
-  { id: 'LB1',   label: 'LB',   base: 77, spread: 8, nums: [[40, 59]] },
-  { id: 'LB2',   label: 'LB',   base: 71, spread: 7, nums: [[40, 59]] },
-  { id: 'CB1',   label: 'CB',   base: 80, spread: 9, nums: [[20, 39]] },
-  { id: 'CB2',   label: 'CB',   base: 73, spread: 9, nums: [[20, 39]] },
-  { id: 'NB',    label: 'NB',   base: 71, spread: 8, nums: [[20, 39]] },
-  { id: 'S1',    label: 'S',    base: 77, spread: 8, nums: [[20, 49]] },
-  { id: 'S2',    label: 'S',    base: 72, spread: 8, nums: [[20, 49]] },
+  { id: 'EDGE1', label: 'EDGE', base: 79, spread: 8, nums: [[50, 59], [90, 99]], key: true },
+  { id: 'EDGE2', label: 'EDGE', base: 73, spread: 8, nums: [[50, 59], [90, 99]], key: true },
+  { id: 'EDGE3', label: 'EDGE', base: 66, spread: 7, nums: [[50, 59], [90, 99]] },
+  { id: 'EDGE4', label: 'EDGE', base: 60, spread: 7, nums: [[50, 59], [90, 99]] },
+  { id: 'DT',    label: 'DT',   base: 76, spread: 7, nums: [[60, 79], [90, 99]], key: true },
+  { id: 'DT2',   label: 'DT',   base: 72, spread: 7, nums: [[60, 79], [90, 99]] },
+  { id: 'DT3',   label: 'DT',   base: 66, spread: 7, nums: [[60, 79], [90, 99]] },
+  { id: 'DT4',   label: 'DT',   base: 59, spread: 7, nums: [[60, 79], [90, 99]] },
+  { id: 'LB1',   label: 'LB',   base: 77, spread: 8, nums: [[40, 59]], key: true },
+  { id: 'LB2',   label: 'LB',   base: 71, spread: 7, nums: [[40, 59]], key: true },
+  { id: 'LB3',   label: 'LB',   base: 65, spread: 7, nums: [[40, 59]] },
+  { id: 'LB4',   label: 'LB',   base: 60, spread: 7, nums: [[40, 59]] },
+  { id: 'LB5',   label: 'LB',   base: 56, spread: 7, nums: [[40, 59]] },
+  { id: 'CB1',   label: 'CB',   base: 80, spread: 9, nums: [[20, 39]], key: true },
+  { id: 'CB2',   label: 'CB',   base: 73, spread: 9, nums: [[20, 39]], key: true },
+  { id: 'CB3',   label: 'CB',   base: 66, spread: 8, nums: [[20, 39]] },
+  { id: 'CB4',   label: 'CB',   base: 60, spread: 7, nums: [[20, 39]] },
+  { id: 'CB5',   label: 'CB',   base: 56, spread: 7, nums: [[20, 39]] },
+  { id: 'NB',    label: 'NB',   base: 71, spread: 8, nums: [[20, 39]], key: true },
+  { id: 'NB2',   label: 'NB',   base: 62, spread: 7, nums: [[20, 39]] },
+  { id: 'S1',    label: 'S',    base: 77, spread: 8, nums: [[20, 49]], key: true },
+  { id: 'S2',    label: 'S',    base: 72, spread: 8, nums: [[20, 49]], key: true },
+  { id: 'S3',    label: 'S',    base: 64, spread: 7, nums: [[20, 49]] },
+  { id: 'S4',    label: 'S',    base: 58, spread: 7, nums: [[20, 49]] },
+  { id: 'LB6',   label: 'LB',   base: 54, spread: 7, nums: [[40, 59]] },
+  { id: 'LS',    label: 'LS',   base: 68, spread: 6, nums: [[40, 59]] },
 ];
+
+/** The spots the play engine actually resolves with. */
+export const KEY_OFF = OFF_SPOTS.filter((s) => s.key).map((s) => s.id);
+export const KEY_DEF = DEF_SPOTS.filter((s) => s.key).map((s) => s.id);
 
 function gauss(rng, mean, sd) {
   let u = 0, v = 0;
@@ -70,6 +114,9 @@ function build(rng, spots, used, taken) {
     name: drawName(rng, used),
     rating: Math.round(Math.max(52, Math.min(97, gauss(rng, s.base, s.spread)))),
     number: drawNumber(rng, s.nums, taken),
+    // Real ages, so ageing between seasons is roughly neutral league-wide.
+    // Without this everyone was treated as 26 and improved every year.
+    age: Math.round(Math.max(21, Math.min(36, gauss(rng, 26.5, 3.4)))),
   }));
 }
 
