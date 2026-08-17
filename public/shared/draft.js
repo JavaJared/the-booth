@@ -90,10 +90,12 @@ export const gradeRank = (g) => GRADE_ORDER.indexOf(g);
 
 /* -------------------------------------------------------------- prospects */
 
+// Only positions with a trait profile can be scouted, which also keeps
+// kickers, punters and long snappers out of a seven round draft.
 const POSITIONS = [
   ...OFF_SPOTS.map((s) => ({ pos: s.label, side: 'offense', spot: s.id })),
   ...DEF_SPOTS.map((s) => ({ pos: s.label, side: 'defense', spot: s.id })),
-];
+].filter((p) => POSITION_TRAITS[p.pos]);
 const UNIQUE_POS = [...new Map(POSITIONS.map((p) => [p.pos, p])).values()];
 
 function drawName(rng, used) {
@@ -308,22 +310,32 @@ export function addToRoster(roster, player) {
   const side = player.side;
   const list = [...roster[side]];
   const group = list.map((cur, i) => ({ cur, i })).filter(({ cur }) => cur.pos === player.pos);
-  if (!group.length) return { roster, replaced: null, kept: false };
+  if (!group.length) return { roster, replaced: null, kept: false, madeRoster: false };
   const worst = [...group].sort((a, b) => a.cur.rating - b.cur.rating)[0];
-  if (player.rating <= worst.cur.rating) return { roster, replaced: null, kept: false };
+  // Everyone you draft joins the roster; only some of them start. Turning a
+  // late pick away entirely meant most of a class vanished the moment it was
+  // taken, which is not how a roster works.
+  if (player.rating <= worst.cur.rating) {
+    return { roster, replaced: null, kept: false, madeRoster: false };
+  }
 
   list[worst.i] = { ...worst.cur, name: player.name, rating: player.rating,
-    age: player.age, acquired: player.id };
+    age: player.age, acquired: player.id, draftedIn: player.draftedIn ?? null };
   // Best man at the position holds the starting spot.
   const regroup = list.map((cur, i) => ({ cur, i })).filter(({ cur }) => cur.pos === player.pos);
   const ranked = [...regroup].sort((a, b) => b.cur.rating - a.cur.rating);
   const slots = regroup.map(({ cur }) => ({ spot: cur.spot, number: cur.number }))
     .sort((a, b) => spotsFor(side).findIndex((s) => s.id === a.spot)
                   - spotsFor(side).findIndex((s) => s.id === b.spot));
-  ranked.forEach((e, k) => { list[e.i] = { ...e.cur, spot: slots[k].spot, number: slots[k].number }; });
+  // Carry every field forward. Rebuilding from spot and number alone dropped
+  // age, which then showed as "undefined" on the depth chart.
+  ranked.forEach((e, k) => {
+    list[e.i] = { ...e.cur, spot: slots[k].spot, number: slots[k].number };
+  });
   list.sort((a, b) => spotsFor(side).findIndex((s) => s.id === a.spot)
                     - spotsFor(side).findIndex((s) => s.id === b.spot));
-  return { roster: { ...roster, [side]: list }, replaced: worst.cur, kept: true };
+  return { roster: { ...roster, [side]: list }, replaced: worst.cur,
+    kept: true, madeRoster: true };
 }
 
 export function teamNeed(roster, side) {
@@ -379,12 +391,16 @@ export function ageRoster(roster, seed, year) {
   const rng = mulberry32(hashSeed(`${seed}:age:${year}`));
   const step = (list) => list.map((p) => {
     const age = (p.age || 26) + 1;
+    // Ageing runs after the draft, so the flag cannot simply be stripped here
+    // or it would clear the class that just arrived. Stamp the year instead
+    // and let the roster page decide who still counts as a rookie.
+    const rest = p;
     let delta;
     if (age <= 24) delta = gauss(rng, 2.0, 2.0);
     else if (age <= 27) delta = gauss(rng, 0.5, 1.8);
     else if (age <= 30) delta = gauss(rng, -0.9, 1.8);
     else delta = gauss(rng, -3.1, 2.2);
-    return { ...p, age, rating: Math.round(clamp(p.rating + delta, 45, 99)) };
+    return { ...rest, age, rating: Math.round(clamp(p.rating + delta, 45, 99)) };
   });
   return { offense: step(roster.offense), defense: step(roster.defense) };
 }
