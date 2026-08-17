@@ -12,27 +12,30 @@ import { mulberry32, hashSeed } from './engine.js';
 
 /** How the ball is shared at each spot, as a rough fraction of unit volume. */
 const OFF_SHARE = {
-  QB:  { passAtt: 1.00, rush: 0.06 },
-  RB1: { rush: 0.58, targets: 0.13 },
-  RB2: { rush: 0.28, targets: 0.06 },
-  WR1: { targets: 0.26 },
-  WR2: { targets: 0.19 },
-  WR3: { targets: 0.13 },
-  TE1: { targets: 0.16 },
-  TE2: { targets: 0.05 },
-  OL:  {},
+  QB:  { passAtt: 0.94, rush: 0.05 }, QB2: { passAtt: 0.06, rush: 0.01 },
+  RB1: { rush: 0.54, targets: 0.12 }, RB2: { rush: 0.26, targets: 0.06 },
+  RB3: { rush: 0.09, targets: 0.02 }, FB: { rush: 0.03, targets: 0.01 },
+  WR1: { targets: 0.25 }, WR2: { targets: 0.18 }, WR3: { targets: 0.12 },
+  WR4: { targets: 0.05 }, WR5: { targets: 0.02 },
+  TE1: { targets: 0.15 }, TE2: { targets: 0.05 }, TE3: { targets: 0.01 },
 };
 const DEF_SHARE = {
   EDGE1: { tackles: 0.09, sacks: 0.26, pbu: 0.02 },
   EDGE2: { tackles: 0.07, sacks: 0.18, pbu: 0.02 },
+  EDGE3: { tackles: 0.02, sacks: 0.05 }, EDGE4: { tackles: 0.01, sacks: 0.02 },
   DT:    { tackles: 0.08, sacks: 0.14, pbu: 0.01 },
+  DT2:   { tackles: 0.05, sacks: 0.07 }, DT3: { tackles: 0.02, sacks: 0.03 },
   LB1:   { tackles: 0.19, sacks: 0.09, pbu: 0.07, ints: 0.10 },
   LB2:   { tackles: 0.13, sacks: 0.06, pbu: 0.05, ints: 0.06 },
+  LB3:   { tackles: 0.05, sacks: 0.02, pbu: 0.02, ints: 0.02 },
   CB1:   { tackles: 0.10, sacks: 0.01, pbu: 0.24, ints: 0.24 },
   CB2:   { tackles: 0.09, sacks: 0.01, pbu: 0.19, ints: 0.18 },
+  CB3:   { tackles: 0.03, pbu: 0.06, ints: 0.05 },
   NB:    { tackles: 0.07, sacks: 0.04, pbu: 0.11, ints: 0.10 },
+  NB2:   { tackles: 0.02, pbu: 0.03, ints: 0.02 },
   S1:    { tackles: 0.10, sacks: 0.02, pbu: 0.09, ints: 0.16 },
   S2:    { tackles: 0.08, sacks: 0.01, pbu: 0.06, ints: 0.10 },
+  S3:    { tackles: 0.02, pbu: 0.02, ints: 0.02 },
 };
 
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -49,6 +52,8 @@ function orderByTalent(list, side) {
       .sort((a, b) => spots.findIndex((s) => s.id === a) - spots.findIndex((s) => s.id === b));
     idxs.forEach((i, k) => {
       const target = slots.indexOf(out[i].spot);
+      // Spread the whole player, then override the slot; picking fields by
+      // hand is how age went missing in the first place.
       out[i] = { ...ranked[target], spot: slots[target] };
     });
   }
@@ -101,11 +106,21 @@ export function depthChart(season, side) {
   const n = Math.max(1, games.length);
   const passAtt = Math.round(tot.plays * 0.58);
   const carries = Math.round(tot.plays * 0.40);
-  const tackles = Math.round(tot.plays * 0.95);
-  const sacks = Math.round(clamp(n * 2.9 - tot.points / 55, 12, 70));
+  const tackles = Math.round(tot.plays * 0.82);
+  const sacks = Math.round(clamp(n * 2.3 - tot.points / 60, 12, 62));
   const pbu = Math.round(n * 4.2);
   const ints = Math.round(clamp(tot.to * 0.62, 0, 34));
   const tds = Math.round(tot.points / 7.4);
+
+  // The share table describes a full depth chart, but a roster can carry more
+  // or fewer at a spot. Normalise each category so the pieces still add up to
+  // the unit's actual production rather than inflating past it.
+  const totals = {};
+  for (const p of list) {
+    const sh = share[p.spot] || {};
+    for (const [k, v] of Object.entries(sh)) totals[k] = (totals[k] || 0) + v;
+  }
+  const norm = (key, v) => (totals[key] ? v / totals[key] : 0);
 
   // Talent weighting inside a position group.
   const groupAvg = {};
@@ -123,37 +138,39 @@ export function depthChart(season, side) {
     const k = skew(p);
     const row = {
       spot: p.spot, pos: p.pos, name: p.name, number: p.number,
-      rating: p.rating, age: p.age,
-      rookie: !!p.acquired,
+      rating: p.rating,
+      age: p.age ?? null,
+      // A rookie for exactly one season after he was taken.
+      rookie: p.draftedIn != null && p.draftedIn >= (season.year - 1),
       starter: spots.findIndex((x) => x.id === p.spot) ===
         spots.findIndex((x) => x.id === list.find((q) => q.pos === p.pos)?.spot),
       games: games.length,
     };
     if (side === 'offense') {
       if (s.passAtt) {
-        row.att = Math.round(passAtt * s.passAtt);
+        row.att = Math.round(passAtt * norm('passAtt', s.passAtt));
         row.comp = Math.round(row.att * clamp(0.58 + (p.rating - 75) / 320, 0.45, 0.74));
-        row.passYards = Math.round(tot.pass * 0.94 * k);
-        row.passTD = Math.round(tds * 0.62 * k);
+        row.passYards = Math.round(tot.pass * 0.94 * norm('passAtt', s.passAtt) * k);
+        row.passTD = Math.round(tds * 0.62 * norm('passAtt', s.passAtt) * k);
         row.int = Math.round(clamp(row.att * (0.030 - (p.rating - 75) / 2600), 0, 30));
       }
       if (s.rush) {
-        row.carries = Math.round(carries * s.rush * k);
-        row.rushYards = Math.round(tot.rush * s.rush * k * 1.35);
-        row.rushTD = Math.round(tds * s.rush * 0.55 * k);
+        row.carries = Math.round(carries * norm('rush', s.rush) * k);
+        row.rushYards = Math.round(tot.rush * norm('rush', s.rush) * k * 1.12);
+        row.rushTD = Math.round(tds * norm('rush', s.rush) * 0.55 * k);
       }
       if (s.targets) {
-        row.targets = Math.round(passAtt * s.targets * k);
+        row.targets = Math.round(passAtt * norm('targets', s.targets) * k);
         row.rec = Math.round(row.targets * clamp(0.60 + (p.rating - 75) / 300, 0.42, 0.78));
         // Out of the same pool the quarterback threw for, so the two agree.
-        row.recYards = Math.round(tot.pass * 0.94 * s.targets * k);
-        row.recTD = Math.round(tds * s.targets * 0.9 * k);
+        row.recYards = Math.round(tot.pass * 0.94 * norm('targets', s.targets) * k);
+        row.recTD = Math.round(tds * norm('targets', s.targets) * 0.9 * k);
       }
     } else {
-      row.tackles = Math.round(tackles * (s.tackles || 0) * k);
-      row.sacks = +(sacks * (s.sacks || 0) * k).toFixed(1);
-      row.pbu = Math.round(pbu * (s.pbu || 0) * k);
-      row.ints = Math.round(ints * (s.ints || 0) * k);
+      row.tackles = Math.round(tackles * norm('tackles', s.tackles || 0) * k);
+      row.sacks = +(sacks * norm('sacks', s.sacks || 0) * k).toFixed(1);
+      row.pbu = Math.round(pbu * norm('pbu', s.pbu || 0) * k);
+      row.ints = Math.round(ints * norm('ints', s.ints || 0) * k);
     }
     return row;
   });
@@ -163,25 +180,59 @@ export function depthChart(season, side) {
  * Where the roster is weak, measured against what the position is normally
  * worth. This is the list you should be drafting from.
  */
+/**
+ * Weakness by position group rather than by player. A thin fourth receiver is
+ * not a draft need; a receiver room whose best two are mediocre is. Judged on
+ * the spots the play engine actually resolves with, since those are what your
+ * unit is graded on.
+ */
 export function rosterNeeds(season, side) {
   const roster = season.rosters[season.userTeam];
   const spots = side === 'offense' ? OFF_SPOTS : DEF_SPOTS;
-  return roster[side]
-    .map((p) => {
-      const base = spots.find((s) => s.id === p.spot)?.base || 75;
-      return { spot: p.spot, pos: p.pos, name: p.name, rating: p.rating,
-        age: p.age, gap: +(base - p.rating).toFixed(1) };
-    })
-    .sort((a, b) => b.gap - a.gap);
+  const keyIds = new Set(spots.filter((s) => s.key).map((s) => s.id));
+
+  // Specialists cannot be scouted or drafted, so listing them as a need would
+  // point you at something you cannot act on.
+  const SPECIALIST = new Set(['K', 'P', 'LS']);
+  const groups = {};
+  for (const p of roster[side]) {
+    if (SPECIALIST.has(p.pos)) continue;
+    const g = (groups[p.pos] = groups[p.pos] || { pos: p.pos, players: [] });
+    g.players.push(p);
+  }
+
+  return Object.values(groups).map((g) => {
+    const ranked = [...g.players].sort((a, b) => b.rating - a.rating);
+    const starters = g.players.filter((p) => keyIds.has(p.spot)).length || 1;
+    const top = ranked.slice(0, starters);
+    const have = top.reduce((a, p) => a + p.rating, 0) / top.length;
+    const par = top.reduce((a, p) =>
+      a + (spots.find((s) => s.id === p.spot)?.base || 75), 0) / top.length;
+    const oldest = Math.max(...ranked.slice(0, starters).map((p) => p.age || 26));
+    return {
+      pos: g.pos,
+      starters,
+      best: ranked[0],
+      name: ranked[0].name,
+      rating: Math.round(have),
+      age: oldest,
+      depth: g.players.length,
+      gap: +(par - have).toFixed(1),
+    };
+  }).sort((a, b) => b.gap - a.gap);
 }
 
 /** A one-line read on the state of a unit. */
 export function unitSummary(season, side) {
   const rows = rosterNeeds(season, side);
-  const holes = rows.filter((r) => r.gap >= 6);
+  const holes = rows.filter((r) => r.gap >= 4);
   const aging = season.rosters[season.userTeam][side].filter((p) => (p.age || 26) >= 31);
   const young = season.rosters[season.userTeam][side].filter((p) => (p.age || 26) <= 23);
-  const avg = rows.reduce((a, r) => a + r.rating, 0) / Math.max(1, rows.length);
+  // The average that matters is the one the play engine reads: starters.
+  const spots = side === 'offense' ? OFF_SPOTS : DEF_SPOTS;
+  const keyIds = new Set(spots.filter((s) => s.key).map((s) => s.id));
+  const starters = season.rosters[season.userTeam][side].filter((p) => keyIds.has(p.spot));
+  const avg = starters.reduce((a, p) => a + p.rating, 0) / Math.max(1, starters.length);
   return {
     average: +avg.toFixed(1),
     holes: holes.slice(0, 3),
