@@ -4,7 +4,7 @@
 // same on a résumé.
 import { makeSchedule, TEAMS, TEAM_BY_ID, fullName, sortedStandings,
   playoffBracket, wildCardRound, reseed } from './league.js';
-import { makeLeagueRosters, teamStrength } from './roster.js';
+import { makeLeagueRosters, teamStrength, migrateRoster, needsMigration } from './roster.js';
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
@@ -37,7 +37,14 @@ export function hydrate(saved) {
   const ids = TEAMS.map((t) => t.id);
   // Generated from the seed on year one, then carried forward: once players can
   // be drafted, signed or aged, a roster stops being a function of the seed.
-  const rosters = saved.rosters || makeLeagueRosters(saved.seed, ids);
+  let rosters = saved.rosters || makeLeagueRosters(saved.seed, ids);
+  // A season saved before the roster expanded still loads; fill it out rather
+  // than leaving an old campaign stuck with nineteen men and no ages.
+  if (ids.some((id) => needsMigration(rosters[id]))) {
+    const usedNames = new Set();
+    rosters = Object.fromEntries(ids.map((id) =>
+      [id, migrateRoster(rosters[id] || { offense: [], defense: [] }, saved.seed, id, usedNames)]));
+  }
   return {
     ...saved,
     schedule: makeSchedule(saved.seed),
