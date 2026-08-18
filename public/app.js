@@ -586,11 +586,7 @@ $('dz-save').addEventListener('click', () => {
     if (!d.name.trim()) return flash('Give the play a name.');
     if (DZ.carrier.length < 2) return flash('Draw where the ball carrier goes.');
     const play = deriveRun({ ...d, id: 'cr' + Math.random().toString(36).slice(2, 8) });
-    registerCustomPlays([play]);
-    if (app.season) {
-      app.season = { ...app.season, customPlays: [...(app.season.customPlays || []), play] };
-      saveSeason();
-    }
+    run(link.install(play));
     DZ.carrier = []; DZ.blocks = {}; DZ.sel = null; DZ.carrierSpot = 'RB1';
     $('dz-name').value = '';
     flash(`${play.name} installed \u2014 ${play.tag}.`);
@@ -600,11 +596,7 @@ $('dz-save').addEventListener('click', () => {
     const d = defDesign();
     if (!d.name.trim()) return flash('Give the call a name.');
     const call = deriveDefense({ ...d, id: 'cd' + Math.random().toString(36).slice(2, 8) });
-    registerCustomDefenses([call]);
-    if (app.season) {
-      app.season = { ...app.season, customDefenses: [...(app.season.customDefenses || []), call] };
-      saveSeason();
-    }
+    run(link.install(call));
     $('dz-name').value = '';
     flash(`${call.name} installed \u2014 ${COV_LABEL[call.cov]}.`);
     return drawDesigner();
@@ -618,11 +610,7 @@ $('dz-save').addEventListener('click', () => {
   const bad = validate(design);
   if (bad.length) return flash(bad[0]);
   const play = derivePlay(design);
-  registerCustomPlays([play]);
-  if (app.season) {
-    app.season = { ...app.season, customPlays: [...(app.season.customPlays || []), play] };
-    saveSeason();
-  }
+  run(link.install(play));
   DZ.routes = {}; DZ.sel = null;
   $('dz-name').value = '';
   flash(`${play.name} installed — ${play.tag}.`);
@@ -740,6 +728,22 @@ const link = {
     if (this.local) { app.season = advocate(app.season, app.seat, prospectId, amount); renderSeason(); return; }
     await api('advocate', { seasonId: app.seasonId, prospectId, amount });
   },
+  /** A drawn play has to reach whoever resolves the snap. */
+  async install(play) {
+    registerCustomPlays(play.cov ? [] : [play]);
+    if (play.cov) registerCustomDefenses([play]);
+    if (this.local) {
+      if (app.season) {
+        const key = play.cov ? 'customDefenses' : 'customPlays';
+        app.season = { ...app.season, [key]: [...(app.season[key] || []), play] };
+        saveSeason();
+      }
+      return;
+    }
+    // In a shared season the server owns the document, so a play written only
+    // to app.season is wiped by the next snapshot and the snap is rejected.
+    await api('installPlay', { seasonId: app.seasonId, play });
+  },
   async runPicks(makeOurs) {
     if (this.local) { app.season = runPicks(app.season, { makeOurs }); renderSeason(); return; }
     await api('runPicks', { seasonId: app.seasonId, makeOurs: !!makeOurs });
@@ -779,6 +783,10 @@ function watchSeason(fb, seasonId, seat) {
     if (!doc) return;
     app.seasonDoc = doc;
     app.season = hydrate(JSON.parse(JSON.stringify(doc)));
+    // Register on every snapshot, not just on load: a play your rival installs
+    // arrives here and the resolver needs to know about it too.
+    registerCustomPlays(app.season.customPlays || []);
+    registerCustomDefenses(app.season.customDefenses || []);
 
     if (doc.currentGameId && attached !== doc.currentGameId) {
       attached = doc.currentGameId;
