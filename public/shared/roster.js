@@ -161,6 +161,54 @@ export function makeLeagueRosters(seed, teamIds) {
   return out;
 }
 
+/**
+ * Bring an older roster up to the current depth chart. Saves made before the
+ * roster expanded carry only the starters and no ages, so the missing spots
+ * are filled with plausible backups rather than leaving the save stranded at
+ * nineteen men. Existing players keep everything about them.
+ */
+export function migrateRoster(roster, seed, teamId, usedNames = new Set()) {
+  const rng = mulberry32(hashSeed(`${seed}:migrate:${teamId}`));
+  // Numbers are unique per club and names unique league-wide, so both sets have
+  // to span the whole roster rather than one unit at a time.
+  const taken = new Set([...(roster.offense || []), ...(roster.defense || [])]
+    .map((p) => p.number).filter((n) => n != null));
+  for (const p of [...(roster.offense || []), ...(roster.defense || [])]) usedNames.add(p.name);
+
+  const fix = (list, spots) => {
+    const have = new Map(list.map((p) => [p.spot, p]));
+    const used = usedNames;
+    return spots.map((s) => {
+      const cur = have.get(s.id);
+      if (cur) {
+        // Only supply what is missing; never overwrite a real player.
+        return {
+          ...cur,
+          age: cur.age ?? Math.round(Math.max(21, Math.min(36, gauss(rng, 26.5, 3.4)))),
+          number: cur.number ?? drawNumber(rng, s.nums, taken),
+        };
+      }
+      return {
+        spot: s.id, pos: s.label,
+        name: drawName(rng, used),
+        rating: Math.round(Math.max(45, Math.min(97, gauss(rng, s.base, s.spread)))),
+        number: drawNumber(rng, s.nums, taken),
+        age: Math.round(Math.max(21, Math.min(36, gauss(rng, 26.5, 3.4)))),
+      };
+    });
+  };
+  return {
+    offense: fix(roster.offense || [], OFF_SPOTS),
+    defense: fix(roster.defense || [], DEF_SPOTS),
+  };
+}
+
+/** Does this roster predate the current depth chart? */
+export const needsMigration = (roster) =>
+  !roster || (roster.offense?.length || 0) < OFF_SPOTS.length
+          || (roster.defense?.length || 0) < DEF_SPOTS.length
+          || (roster.offense || []).some((p) => p.age == null);
+
 /** Collapse a roster into the two numbers a fast simulation needs. */
 export function teamStrength(roster) {
   const o = bySpot(roster.offense), d = bySpot(roster.defense);
