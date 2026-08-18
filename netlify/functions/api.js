@@ -297,6 +297,29 @@ const actions = {
     return { left: next.scoutLeft[seat] };
   },
 
+  /**
+   * Install a play or defensive call a coordinator drew. It has to live on the
+   * season document: the server resolves every snap, so a play that only
+   * exists in one browser is rejected as an unknown call.
+   */
+  async installPlay(uid, { seasonId, play }) {
+    const { seat, season } = await loadSeason(seasonId, uid);
+    if (!play?.id || !play.name) bad('That play is missing an id or a name.');
+    const side = seat === 'OC' ? 'offense' : 'defense';
+    const isDefense = !!play.cov;
+    if (isDefense !== (side === 'defense')) {
+      throw new ApiError(403, 'You can only install calls for your own unit.');
+    }
+    const key = isDefense ? 'customDefenses' : 'customPlays';
+    const existing = season[key] || [];
+    if (existing.length >= 40) throw new ApiError(409, 'That playbook is full.');
+    if (existing.some((p) => p.id === play.id)) return { ok: true };
+    // Re-derive nothing: the drawing already produced these numbers, and the
+    // shape is validated by the resolver the moment it is called.
+    await seasonRef(seasonId).update({ [key]: [...existing, play], installedBy: seat });
+    return { ok: true, count: existing.length + 1 };
+  },
+
   async toggleBoard(uid, { seasonId, prospectId }) {
     const { seat, season } = await loadSeason(seasonId, uid);
     if (season.carousel?.stage !== 'scouting') throw new ApiError(409, 'Not the scouting stage.');
