@@ -12,6 +12,7 @@ import { createSeason, advanceWeek, simRemainingWeek, userGame, record as season
 import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { POSITION_GROUPS, DRILL_LABEL, gradeRank } from './shared/draft.js';
 import { depthChart, rosterNeeds, unitSummary as rosterUnit } from './shared/depth.js';
+import { seasonAwards } from './shared/awards.js';
 import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute,
   OL_SPOTS, runSpots, DEF_ALIGN, deriveRun, deriveDefense, readRun, readDefense } from './shared/designer.js';
 import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.js';
@@ -925,7 +926,7 @@ function renderSeason() {
   pane.innerHTML = '';
   if ((S.phase === 'offseason' || S.phase === 'hired') && tab === 'week') paneOffseason(pane, S);
   else ({ week: paneWeek, standings: paneStandings, roster: paneRoster,
-    resume: paneResume, bracket: paneBracket }[tab])(pane, S);
+    awards: paneAwards, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
   saveSeason();
 }
 
@@ -1328,9 +1329,13 @@ function careerCard(S, seat) {
       [`${unitLabel}, points`, ordinal(c.current.ranks.points)],
     ]) + noteEl('One year is a sample. Clubs want to see you do it again.'));
   }
+  const HON = { coy: 'Coach of the Year', ocoy: 'Coordinator of the Year',
+    dcoy: 'Coordinator of the Year' };
   const rows = c.years.map((y) => [
     `${y.year}`, `${y.w}\u2013${y.l}`, ordinal(y.ranks.points), y.ypp.toFixed(2),
-    `${y.champion ? '<b class="invited">champion</b>' : y.madePlayoffs ? 'playoffs' : ''}`,
+    [(y.honours || []).map((k) => `<b class="invited">${HON[k] || k}</b>`).join(' '),
+     y.champion ? '<b class="invited">champion</b>' : y.madePlayoffs ? 'playoffs' : '',
+    ].filter(Boolean).join(' &middot; '),
   ]);
   rows.push([`${S.year}`, `${c.current.record.w}\u2013${c.current.record.l}`,
     ordinal(c.current.ranks.points), c.current.stats.ypp.toFixed(2), '<em>this year</em>']);
@@ -1492,6 +1497,51 @@ function paneRoster(pane, S) {
 }
 
 const ROS = { side: null };
+
+/* ---------- awards ---------- */
+
+function paneAwards(pane, S) {
+  // Voted when the calendar closes; before that, show where the race stands.
+  const done = S.phase === 'offseason' || S.phase === 'hired' || S.phase === 'done';
+  const A = S.awards || (S.results.length >= 32 ? seasonAwards(S) : null);
+  if (!A) {
+    pane.append(card('Season awards',
+      note('Nothing to vote on yet. The ballots come in once the season has some games behind it.')));
+    return;
+  }
+  if (!done) {
+    pane.append(card('The race so far',
+      noteEl(`Week ${S.week}. Nothing is decided until the season ends, but this is who the voters are watching.`)));
+  }
+
+  const rows = A.awards.filter((x) => x.winner).map((x) => {
+    const w = x.winner;
+    const mine = w.teamId === S.userTeam;
+    return [
+      x.label,
+      `${mine ? '<mark>' : ''}${w.pos} ${w.name}${mine ? '</mark>' : ''}`
+        + `<em class="awteam">${TEAM_BY_ID[w.teamId].name}</em>`,
+      w.headline(w.stats),
+    ];
+  });
+  pane.append(card(done ? `${A.year} honours` : 'Leading the vote',
+    table(['', 'Player', ''], rows)));
+
+  const staff = A.staff.map((x) => {
+    const mine = x.teamId === S.userTeam;
+    const who = x.mine ? 'You' : (x.name || `${TEAM_BY_ID[x.teamId].city} staff`);
+    return [x.label, `${mine ? '<mark>' : ''}${who}${mine ? '</mark>' : ''}`
+      + `<em class="awteam">${TEAM_BY_ID[x.teamId].name}</em>`, x.note];
+  });
+  pane.append(card('Staff', table(['', '', ''], staff)));
+
+  const yours = A.staff.filter((x) => x.mine);
+  if (yours.length) {
+    pane.append(card('On your résumé',
+      `<p class="verdict-big">${yours.map((x) => x.label).join(' &middot; ')}</p>`
+      + noteEl('Hiring clubs see this.')));
+  }
+}
 
 function paneResume(pane, S) {
   const R = resume(S, app.seat);
