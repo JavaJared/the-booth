@@ -297,8 +297,11 @@ export function simPlayerLines(roster, ourUnit, theirUnit, seedKey) {
   // every single week.
   const wob = () => clamp(gaussFrom(rng, 1, 0.26), 0.4, 1.7);
 
-  const passAtt = Math.round(ourUnit.plays * 0.58);
-  const carries = Math.round(ourUnit.plays * 0.40);
+  // A unit's plays include sacks, penalties and kneels. Dropbacks and carries
+  // together are well under the total, and 0.58 + 0.40 was handing out nearly
+  // every snap twice — which is how a quarterback reached 735 attempts.
+  const passAtt = Math.round(ourUnit.plays * 0.53);
+  const carries = Math.round(ourUnit.plays * 0.38);
   const tds = Math.max(0, Math.round(ourUnit.points / 7.4));
 
   const oSkew = skew(offList);
@@ -313,7 +316,8 @@ export function simPlayerLines(roster, ourUnit, theirUnit, seedKey) {
     if (pa > 0) {
       row.att = Math.round(passAtt * pa * wob());
       row.comp = Math.round(row.att * clamp(0.58 + (p.rating - 75) / 320, 0.42, 0.76));
-      row.passYards = Math.round(ourUnit.passYards * pa * k * wob());
+      // One game's passing, so the season total cannot run away.
+      row.passYards = Math.round(clamp(ourUnit.passYards * pa * k * wob(), 0, 470));
       row.passTD = Math.round(tds * 0.62 * pa * wob());
       row.int = Math.max(0, Math.round(row.att * (0.030 - (p.rating - 75) / 2600) * wob()));
     }
