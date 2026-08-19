@@ -1872,6 +1872,8 @@ function renderFeed(g, plays) {
           <em>${situationLabel(p, g)}</em>
           ${ours ? off : `<i>${off}</i>`}${def ? (ours ? ' vs <i>' + def + '</i>' : ' vs ' + def) : ''}
         </div><div class="result">${o.desc || ''}</div>`;
+      const who = castLine(p);
+      if (who) row.insertAdjacentHTML('beforeend', `<div class="cast">${who}</div>`);
       if (!p.special && o.yards != null && !o.penalty) {
         // Judge the play from the seat of whoever is reading it: an offense
         // stalling is a bad result on your drive and a good one on your stop.
@@ -1902,9 +1904,45 @@ function renderFeed(g, plays) {
       `<span class="dd">${p.possession === 'US' ? abbr(g.teamName) : abbr(g.oppName)} ${p.down}&amp;${p.distance}</span>` +
       `<span>${o.desc || ''}${(p.events || [])
         .filter((e) => e.type === 'score' || e.type === 'period')
-        .map((e) => ' ' + e.text).join('')}</span>`);
+        .map((e) => ' ' + e.text).join('')}` +
+      (castLine(p) ? `<i class="feed-cast">${castLine(p)}</i>` : '') + '</span>');
     feed.append(li);
   }
+}
+
+/**
+ * Who was actually involved. The engine credits every snap already; this just
+ * reads it back, so a line in the feed names the men rather than describing an
+ * event that happened to nobody.
+ */
+function castLine(p) {
+  const o = p.outcome;
+  const c = o?.cast;
+  if (!c) return '';
+  // A flag wipes the play out, so nobody carried, caught or tackled anything.
+  if (o.penalty && o.penalty.replay) return '';
+  if (o.deadBall) return '';
+  const nm = (x) => (x ? `<b>${x.pos} ${x.name}</b>` : '');
+  const bits = [];
+
+  if (c.carrier) {
+    bits.push(nm(c.carrier));
+    if (c.forced) bits.push(`fumble forced by ${nm(c.forced)}`);
+    else if (c.tackler) bits.push(`tackled by ${nm(c.tackler)}`);
+  } else if (c.sacker) {
+    bits.push(`${nm(c.passer)} sacked by ${nm(c.sacker)}`);
+    if (c.forced) bits.push('ball came loose');
+  } else if (c.interceptor) {
+    bits.push(`${nm(c.passer)} intercepted by ${nm(c.interceptor)}`);
+    if (c.target) bits.push(`intended for ${nm(c.target)}`);
+  } else if (c.breakup) {
+    bits.push(`${nm(c.passer)} incomplete for ${nm(c.target)}`);
+    bits.push(`broken up by ${nm(c.breakup)}`);
+  } else if (c.target) {
+    bits.push(`${nm(c.passer)} to ${nm(c.target)}`);
+    if (c.tackler) bits.push(`tackled by ${nm(c.tackler)}`);
+  }
+  return bits.filter(Boolean).join(' &middot; ');
 }
 
 /** "IRO 4th & 6 at the CAS 38" — names both teams, so nothing is ambiguous. */
