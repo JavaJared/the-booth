@@ -37,9 +37,22 @@ function leadersFor(teamId, roster, unit, seed) {
 
   // off.yards is the whole offence for the season. Split it the way a real one
   // splits, and cap the quarterback's share so nobody posts 6,500 yards.
-  const passYards = clamp(off.yards * 0.62, 1200, 5200);
-  const rushYards = clamp(off.yards * 0.38, 700, 2900);
-  const tds = off.points / 7.4;
+  // Everything below is built from PER GAME rates and then multiplied by the
+  // games actually played, so a week four leader shows week four numbers.
+  const perGame = {
+    passYards: clamp(off.yards / games * 0.62, 90, 295),
+    rushYards: clamp(off.yards / games * 0.38, 50, 190),
+    tds: off.points / games / 7.4,
+  };
+  const passYards = perGame.passYards * games;
+  const rushYards = perGame.rushYards * games;
+  const tds = perGame.tds * games;
+
+  // A quarterback genuinely accounts for nearly all of his unit's passing.
+  // Nobody else does: a leading rusher is roughly half a run game, a top
+  // receiver about a quarter of the targets, and a pass rusher's sacks are his
+  // own rate rather than a slice of the team's defensive output.
+  const rate = (base, perG) => Math.max(0, perG) * games;
 
   const out = [];
   const add = (p, side, stats, headline) => {
@@ -72,9 +85,9 @@ function leadersFor(teamId, roster, unit, seed) {
       out.push({ teamId, side, pos: r.pos, name: r.name, rating: r.rating,
         age: r.age, rookie: true, stats, headline });
     } else {
-      const stats = { tackles: Math.round(games * 4.5 * share + 12),
-        sacks: Math.round(clamp(3 + stopsFor * 0.3, 0, 12) * share * 2) / 2,
-        ints: Math.round(clamp(1 + stopsFor * 0.2, 0, 6) * share) };
+      const stats = { tackles: Math.round(games * (4.2 * share + 0.9)),
+        sacks: Math.round(games * (0.30 + stopsFor * 0.05) * share * 2) / 2,
+        ints: Math.round(games * (0.15 + stopsFor * 0.03) * share) };
       out.push({ teamId, side, pos: r.pos, name: r.name, rating: r.rating,
         age: r.age, rookie: true, stats,
         headline: (x) => [x.sacks ? `${x.sacks} sacks` : null, `${x.tackles} tackles`,
@@ -89,7 +102,7 @@ function leadersFor(teamId, roster, unit, seed) {
   }, (s) => `${s.passYards} yards, ${s.passTD} TD, ${s.int} INT`);
 
   add(rb, 'offense', {
-    rushYards: Math.round(rushYards * 0.62 * wob(0.14)),
+    rushYards: Math.round(rushYards * 0.58 * wob(0.14)),
     rushTD: Math.round(tds * 0.22 * wob(0.3)),
   }, (s) => `${s.rushYards} rushing, ${s.rushTD} TD`);
 
@@ -103,27 +116,32 @@ function leadersFor(teamId, roster, unit, seed) {
     recTD: Math.round(tds * 0.12 * wob(0.4)),
   }, (s) => `${s.recYards} receiving, ${s.recTD} TD`);
 
-  // A defence that gave up little did it with somebody.
-  const stops = clamp((5.6 - def.ypp) * 9 + (24 - def.pointsPerGame) * 0.5, -4, 14);
+  // How good the defence was, as a modest nudge to individual rates rather
+  // than a pool to be divided up. A dominant unit produces good players; it
+  // does not hand one man fifteen sacks by week four.
+  const stops = clamp((5.6 - def.ypp) * 2.2 + (24 - def.pointsPerGame) * 0.14, -1.6, 2.4);
   const stopsFor = stops;
+  const quality = (p) => ((p?.rating || 72) - 74) / 22;   // roughly -1.3 .. +1.1
+
+  // Per game rates, taken from what real leaders actually average.
   add(edge, 'defense', {
-    sacks: Math.round(clamp(6 + stops * 0.55 + (edge?.rating - 75) / 6, 1, 22) * wob(0.2) * 2) / 2,
-    tackles: Math.round(games * 3.4 * wob(0.2)),
+    sacks: Math.round(rate(0, (0.52 + stops * 0.09 + quality(edge) * 0.16) * wob(0.22)) * 2) / 2,
+    tackles: Math.round(rate(0, 3.3 * wob(0.2))),
   }, (s) => `${s.sacks} sacks, ${s.tackles} tackles`);
 
   add(lb, 'defense', {
-    tackles: Math.round(games * 8.2 * wob(0.14)),
-    sacks: Math.round(clamp(2 + stops * 0.2, 0, 9) * wob(0.4) * 2) / 2,
+    tackles: Math.round(rate(0, (8.6 + quality(lb) * 1.2) * wob(0.13))),
+    sacks: Math.round(rate(0, (0.14 + stops * 0.03) * wob(0.45)) * 2) / 2,
   }, (s) => `${s.tackles} tackles, ${s.sacks} sacks`);
 
   add(cb, 'defense', {
-    ints: Math.round(clamp(2 + stops * 0.35 + (cb?.rating - 75) / 12, 0, 11) * wob(0.35)),
-    pbu: Math.round(games * 1.1 * wob(0.3)),
+    ints: Math.round(rate(0, (0.155 + stops * 0.035 + quality(cb) * 0.055) * wob(0.4))),
+    pbu: Math.round(rate(0, 1.05 * wob(0.3))),
   }, (s) => `${s.ints} interceptions, ${s.pbu} passes defended`);
 
   add(saf, 'defense', {
-    ints: Math.round(clamp(1.5 + stops * 0.28, 0, 9) * wob(0.4)),
-    tackles: Math.round(games * 5.4 * wob(0.18)),
+    ints: Math.round(rate(0, (0.125 + stops * 0.028) * wob(0.45))),
+    tackles: Math.round(rate(0, (6.0 + quality(saf) * 0.9) * wob(0.16))),
   }, (s) => `${s.ints} interceptions, ${s.tackles} tackles`);
 
   bestRookie(roster.offense, 'offense');
