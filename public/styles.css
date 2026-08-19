@@ -590,3 +590,10 @@ table.scout s{color:var(--ink-3)}
   .depth-row{grid-template-columns:1.8rem 1.8rem minmax(0,1fr) 2.4rem;row-gap:.15rem}
   .depth-row .line{grid-column:3/-1;font-size:.68rem}
 }
+
+/* who was actually on the play */
+.lastplay .cast{margin-top:.3rem;font-size:.8rem;color:var(--ink-2);line-height:1.45}
+.lastplay .cast b{color:var(--ink);font-weight:600}
+.feed-cast{display:block;font-style:normal;font-size:.68rem;color:var(--ink-3);
+  margin-top:.1rem;line-height:1.4}
+.feed-cast b{color:var(--ink-2);font-weight:500}
