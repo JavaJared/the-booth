@@ -74,8 +74,9 @@ class LocalTransport {
     }
     return { gameId: this.gameId, seat };
   }
-  async call({ callId, special, auto }) {
-    const r = runToNextDecision(this.gameId, this.game, { callId, special, auto });
+  async call({ callId, special, auto, conversion, timeout }) {
+    const r = runToNextDecision(this.gameId, this.game,
+      { callId, special, auto, conversion, timeout });
     this.plays.push(...r.plays);
     Object.assign(this.game, {
       state: r.state, tendencies: r.tendencies, filmPoints: r.filmPoints,
@@ -119,8 +120,9 @@ class FirebaseTransport {
   async create(opts) { const r = await this.fn('createGame')(opts); this.mySeat = r.data.seat; this.watch(r.data.gameId); return r.data; }
   async join(gameId, displayName) { const r = await this.fn('joinGame')({ gameId, displayName }); this.mySeat = r.data.seat; this.watch(gameId); return r.data; }
   async ready(ready) { return this.fn('setReady')({ gameId: this.gameId, ready }); }
-  async call({ callId, special }) {
-    return this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex, callId, special });
+  async call({ callId, special, conversion, timeout }) {
+    return this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex,
+      callId, special, conversion, timeout });
   }
   async predict(guess) { return this.fn('submitPrediction')({ gameId: this.gameId, playIndex: this.game.state.playIndex, guess }); }
   async plan(_seat, plan) { return this.fn('setGameplan')({ gameId: this.gameId, plan }); }
@@ -1645,7 +1647,8 @@ function render(g, plays) {
   $('hint').hidden = !(hint && hint.seat === mine && hint.playIndex === s.playIndex);
   if (!$('hint').hidden) $('hint').textContent = hint.text;
 
-  $('tempo-row').hidden = !(isMyCall && mine === 'OC');
+  renderTimeouts(g, s, isMyCall);
+  $('tempo-row').hidden = !(isMyCall && mine === 'OC') || !!s.pendingConversion;
   document.querySelectorAll('#tempo-row .chip').forEach((c) => {
     c.classList.toggle('is-on', c.dataset.tempo === (g.gameplan?.OC?.tempo || 'normal'));
   });
@@ -1665,6 +1668,34 @@ function renderLobby(g) {
     const p = g.seats?.[seat];
     row.querySelector('span').textContent = p ? `${p.displayName}${p.ready ? ' — ready' : ''}` : 'Open seat';
     row.classList.toggle('is-ready', !!p?.ready);
+  }
+}
+
+/** Timeouts are the only clock lever a coordinator has; put them on the board. */
+function renderTimeouts(g, s, isMyCall) {
+  let host = document.getElementById('timeouts');
+  if (!host) {
+    host = el('div', 'timeouts');
+    host.id = 'timeouts';
+    document.querySelector('.board-situation')?.insertBefore(host,
+      document.getElementById('btn-pause'));
+  }
+  const left = s.timeouts?.us ?? 0;
+  const dots = [0, 1, 2].map((i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('');
+  host.innerHTML = `<span class="to-label">Timeouts</span>${dots}`;
+  // Worth spending only when the clock is running and you have one.
+  const usable = isMyCall && left > 0 && !s.clockStopped && !s.pendingConversion
+    && s.status === 'live';
+  if (usable) {
+    const b = el('button', 'btn btn-tiny to-use', 'Use one');
+    b.addEventListener('click', async () => {
+      if (app.busy) return;
+      app.busy = true;
+      try { await app.t.call({ timeout: true }); }
+      catch (e) { flash(e.message); }
+      finally { app.busy = false; }
+    });
+    host.append(b);
   }
 }
 
@@ -1773,10 +1804,38 @@ function renderField(g, s, plays) {
 }
 
 function renderCallSheet(g, s, mine) {
-  $('call-title').textContent = mine === 'OC' ? 'Your call — offense' : 'Your call — defense';
   const sheet = $('sheet');
   sheet.className = 'sheet';
   sheet.innerHTML = '';
+
+  // A touchdown pauses everything until the conversion is decided.
+  if (s.pendingConversion) {
+    $('call-title').textContent = 'Touchdown — your call';
+    const lead = s.score.us - s.score.them;
+    const box = el('div', 'group', '<h3>After the touchdown</h3>');
+    const mk2 = (label, tag, choice) => {
+      const b = el('button', 'call', `<b>${label}</b><span>${tag}</span>`);
+      b.addEventListener('click', async () => {
+        if (app.busy) return;
+        app.busy = true;
+        sheet.classList.add('is-locked');
+        b.classList.add('is-picked');
+        try { await app.t.call({ conversion: choice }); }
+        catch (e) { flash(e.message); sheet.classList.remove('is-locked'); b.classList.remove('is-picked'); }
+        finally { app.busy = false; }
+      });
+      return b;
+    };
+    box.append(mk2('Kick the extra point', 'Nearly automatic \u00b7 94%', 'kick'));
+    box.append(mk2('Go for two', 'Coin flip \u00b7 about 48%', 'two'));
+    sheet.append(box);
+    sheet.insertAdjacentHTML('beforeend',
+      `<p class="conv-note">You are ${lead > 0 ? `up ${lead}` : lead < 0 ? `down ${-lead}` : 'level'}.
+        Two points is worth it when it changes what you need next.</p>`);
+    return;
+  }
+
+  $('call-title').textContent = mine === 'OC' ? 'Your call — offense' : 'Your call — defense';
 
   const mk = (id, name, tag, handler) => {
     // Show a call's own record once there's enough of it to mean anything.
@@ -1924,7 +1983,9 @@ function renderFeed(g, plays) {
         </div><div class="result">${o.desc || ''}</div>`;
       const who = castLine(p);
       if (who) row.insertAdjacentHTML('beforeend', `<div class="cast">${who}</div>`);
-      if (!p.special && o.yards != null && !o.penalty) {
+      // A timeout or a conversion is not a snap, so "on schedule" means
+      // nothing there.
+      if (!p.special && !p.conversion && !p.timeout && o.yards != null && !o.penalty) {
         // Judge the play from the seat of whoever is reading it: an offense
         // stalling is a bad result on your drive and a good one on your stop.
         const onSchedule = isSuccess(p.down, p.distance, o.yards);
