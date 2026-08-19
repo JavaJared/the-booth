@@ -251,10 +251,12 @@ function creditPlay(off, out, cast) {
   const c = { defender: nm(cast.defender) };
   if (off.family === 'run') {
     c.carrier = nm(cast.target);
-    c.tackler = nm(cast.defender);
+    if (out.turnover === 'fumble') c.forced = nm(cast.defender);
+    else c.tackler = nm(cast.defender);
   } else if (out.sack) {
     c.passer = nm(cast.qb);
     c.sacker = nm(cast.rusher);
+    if (out.turnover === 'fumble') c.forced = nm(cast.rusher);
   } else {
     c.passer = nm(cast.qb);
     c.target = nm(cast.target);
