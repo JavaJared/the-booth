@@ -346,8 +346,8 @@ export function simPlayerLines(roster, ourUnit, theirUnit, seedKey) {
   const nSk = norm(defList, DEF_SHARE, 'sacks');
   const nPbu = norm(defList, DEF_SHARE, 'pbu');
   const nInt = norm(defList, DEF_SHARE, 'ints');
-  const tackles = Math.round(theirUnit.plays * 0.82);
-  const sacks = clamp(gaussFrom(rng, 2.3, 1.3), 0, 8);
+  const tackles = Math.round(theirUnit.plays * 0.70);
+  const sacks = clamp(gaussFrom(rng, 2.6, 1.4), 0, 9);
   const pbu = Math.round(clamp(gaussFrom(rng, 4.2, 1.8), 0, 12));
 
   const defense = defList.map((p) => {
@@ -357,7 +357,7 @@ export function simPlayerLines(roster, ourUnit, theirUnit, seedKey) {
       tackles: Math.round(tackles * nTkl(p) * k * wob()),
       sacks: halves(sacks * nSk(p) * k * wob()),
       pbu: Math.round(pbu * nPbu(p) * k * wob()),
-      ints: rng() < theirUnit.turnovers * nInt(p) * 1.4 ? 1 : 0,
+      ints: rng() < theirUnit.turnovers * nInt(p) * 0.55 ? 1 : 0,
       ffum: rng() < nTkl(p) * 0.30 ? 1 : 0,
     };
   });
