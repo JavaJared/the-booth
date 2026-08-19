@@ -3,6 +3,7 @@
 import {
   advance, resolveSnap, resolveSpecial, mulberry32, hashSeed,
   cpuDefensiveCall, cpuOffensiveCall, cpuFourthDown, recordTendency,
+  resolveConversion, cpuConversion, callTimeout,
 } from './engine.js';
 import { OFF_BY_ID, DEF_BY_ID } from './playbook.js';
 import { makeRosters } from './roster.js';
@@ -11,7 +12,19 @@ export const PLAY_CLOCK_MS = 45000;
 export const FILM_COST = 3;
 
 /** Which seat has to make the call right now. */
-export const seatOnClock = (state) => (state.possession === 'US' ? 'OC' : 'DC');
+export const seatOnClock = (state) => {
+  // Only our own touchdown is a decision. When the opponent scores, their
+  // conversion is theirs to take — routing it to the defensive coordinator
+  // left him staring at a call sheet for a play he does not make.
+  if (state.pendingConversion) {
+    return state.pendingConversion.team === 'US' ? 'OC'
+      : (state.possession === 'US' ? 'OC' : 'DC');
+  }
+  return state.possession === 'US' ? 'OC' : 'DC';
+};
+
+/** Whose timeouts these are. Either coordinator can burn one on their own unit. */
+export const timeoutSide = (seat) => (seat === 'OC' ? 'US' : 'US');
 
 // Separate RNG streams so a "read keys" hint can be truthful without
 // disturbing the roll that resolves the play.
@@ -55,6 +68,16 @@ export function runToNextDecision(gameId, game, humanCall) {
   const tendencies = JSON.parse(JSON.stringify(game.tendencies));
   const filmPoints = { ...game.filmPoints };
   const plays = [];
+  // A timeout is not a snap: it stops the clock and hands the decision back.
+  if (humanCall.timeout) {
+    const t = callTimeout(state, 'US');
+    return {
+      plays: t.spent ? [logEntry(state.playIndex, state, { desc: 'Timeout.', special: 'timeout', yards: 0 },
+        t.events, { timeout: true, byHuman: true })] : [],
+      state: t.state, tendencies, filmPoints,
+    };
+  }
+
   let pendingSpecial = humanCall.special || null;
   // `auto` means even the first snap is AI-called — needed when the unit on the
   // clock belongs to the AI coordinator, such as the opening kickoff going the
@@ -73,6 +96,26 @@ export function runToNextDecision(gameId, game, humanCall) {
     const rngCpu = cpuRng(gameId, i);
     const rng = playRng(gameId, i);
     const before = JSON.parse(JSON.stringify(state));
+
+    // A touchdown pauses here for the conversion.
+    if (state.pendingConversion) {
+      // Ours is a decision; theirs resolves itself.
+      const ours = state.pendingConversion.team === 'US';
+      const auto = !ours || autoSeat === 'OC';
+      const choice = (humanTurn && humanCall.conversion) ? humanCall.conversion
+        : auto ? cpuConversion(state, rngCpu) : null;
+      if (!choice) break;                      // a human owes us this decision
+      const r = resolveConversion(state, choice, rng);
+      plays.push(logEntry(i, before, r.outcome, r.events, { conversion: choice, byHuman: humanTurn }));
+      state = r.state;
+      humanTurn = false;
+      if (state.status === 'final') break;
+      // Surface the conversion on its own so the result of a decision you just
+      // made is visible — but only stop if a human is actually next. Breaking
+      // unconditionally stranded the AI-run unit that receives the kickoff.
+      if (seatOnClock(state) !== autoSeat) break;
+      continue;
+    }
 
     if (pendingSpecial) {
       const r = resolveSpecial(state, pendingSpecial, rng);
