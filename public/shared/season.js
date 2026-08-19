@@ -9,6 +9,7 @@ import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
 import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
+import { playerLinesFromPlays, simPlayerLines } from './depth.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
   scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
 import { makeCoaches, firings, openingFor, resumeScore, careerScore, invitesFor,
@@ -145,6 +146,9 @@ export function statsFromPlays(plays, state, cfg) {
 
   const usIsHome = cfg.atHome;
   return {
+    // Per-player lines from the snaps that actually happened. Storing them on
+    // the result is what makes the roster page a record rather than a guess.
+    players: playerLinesFromPlays(plays),
     id: cfg.gameId,
     home: usIsHome ? cfg.us : cfg.them,
     away: usIsHome ? cfg.them : cfg.us,
@@ -165,11 +169,23 @@ export function simRemainingWeek(season, week = season.week) {
   const pending = (season.phase === 'playoffs'
     ? (season.playoffs?.games || []).filter((g) => g.week === week)
     : weekGames(season, week)).filter((g) => !done.has(g.id));
-  const fresh = pending.map((g) => ({
-    ...simGame(g.id, g.home, g.away, season.strength, season.seed),
-    week,
-    playoff: season.phase === 'playoffs',
-  }));
+  const us = season.userTeam;
+  const fresh = pending.map((g) => {
+    const r = {
+      ...simGame(g.id, g.home, g.away, season.strength, season.seed),
+      week,
+      playoff: season.phase === 'playoffs',
+    };
+    // Attribute the week's box score once, here, rather than re-deriving the
+    // whole season every time the roster page renders.
+    if (g.home === us || g.away === us) {
+      const ours = g.home === us ? r.homeStats : r.awayStats;
+      const theirs = g.home === us ? r.awayStats : r.homeStats;
+      r.players = simPlayerLines(season.rosters[us], ours, theirs,
+        `${season.seed}:${g.id}`);
+    }
+    return r;
+  });
   return { ...season, results: dedupeResults([...season.results, ...fresh]) };
 }
 
