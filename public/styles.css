@@ -597,3 +597,5 @@ table.scout s{color:var(--ink-3)}
 .feed-cast{display:block;font-style:normal;font-size:.68rem;color:var(--ink-3);
   margin-top:.1rem;line-height:1.4}
 .feed-cast b{color:var(--ink-2);font-weight:500}
+.awteam{display:block;font-style:normal;font-size:.68rem;color:var(--ink-3);
+  font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em}
