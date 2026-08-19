@@ -11,6 +11,7 @@ import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } fro
 import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   simRemainingWeek, advanceWeek, startOffseason, recordInterview,
   setOffseasonReady, advanceOffseason, canReady, bothReady,
+  setWeekReady, canAdvanceWeek, weekReadyBoth,
   openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
   startDraft, advocate, runPicks, isOurPick } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
@@ -248,15 +249,31 @@ const actions = {
     return { ok: true };
   },
 
-  async advanceSeason(uid, { seasonId }) {
-    const { doc, season } = await loadSeason(seasonId, uid);
+  /**
+   * Ready up for the next week. The calendar only moves when both
+   * coordinators have — one of them should never be able to burn a week the
+   * other is still working through.
+   */
+  async advanceSeason(uid, { seasonId, ready = true }) {
+    const { doc, seat, season } = await loadSeason(seasonId, uid);
     if (doc.currentGameId) throw new ApiError(409, 'Finish this week\'s game first.');
+    if (ready && !canAdvanceWeek(season)) {
+      throw new ApiError(409, 'Your club still has a game to play this week.');
+    }
+
+    const seats = seatsIn(doc);
+    const marked = setWeekReady(season, seat, ready);
+    if (!weekReadyBoth(marked, seats)) {
+      await seasonRef(seasonId).update({ weekReady: marked.weekReady });
+      return { waiting: true, week: season.week, phase: season.phase };
+    }
+
     // The end of the calendar opens the carousel rather than advancing a week.
-    const next = season.phase === 'done'
-      ? startOffseason(season, seatsIn(doc))
-      : advanceWeek(season);
+    const next = marked.phase === 'done'
+      ? { ...startOffseason(marked, seats), weekReady: {} }
+      : advanceWeek(marked);
     await seasonRef(seasonId).update({ ...dehydrate(next), vote: { OC: null, DC: null } });
-    return { week: next.week, phase: next.phase };
+    return { waiting: false, week: next.week, phase: next.phase };
   },
 
   /* ------------------------------------------------------------ offseason */
