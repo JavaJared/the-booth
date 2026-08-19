@@ -599,3 +599,15 @@ table.scout s{color:var(--ink-3)}
 .feed-cast b{color:var(--ink-2);font-weight:500}
 .awteam{display:block;font-style:normal;font-size:.68rem;color:var(--ink-3);
   font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em}
+
+/* timeouts and the two point decision */
+.timeouts{display:flex;align-items:center;gap:.3rem;margin-left:auto;margin-right:.6rem}
+.to-label{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+  font-size:.58rem;font-weight:600;color:var(--led-dim);margin-right:.15rem}
+.timeouts i{width:.55rem;height:.55rem;border-radius:50%;background:rgba(255,255,255,.18);
+  display:block}
+.timeouts i.on{background:var(--led)}
+.to-use{margin-left:.4rem;background:transparent;border-color:var(--led-dim);
+  color:var(--led-dim);box-shadow:none}
+.to-use:hover{transform:none;color:var(--led-white);border-color:var(--led-white)}
+.conv-note{grid-column:1/-1;font-family:var(--hand);font-size:1.1rem;color:var(--pencil);margin:.5rem 0 0}
