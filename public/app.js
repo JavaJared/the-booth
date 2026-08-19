@@ -796,7 +796,6 @@ function watchSeason(fb, seasonId, seat) {
       const t = new FirebaseTransport(fb);
       t.mySeat = seat;
       app.t = t;
-      app.liveCfg = null;
       t.watch(doc.currentGameId);
       t.subscribe(render);
       show('game');
@@ -1597,6 +1596,10 @@ function card(title, inner) {
 
 /** Hand this week's matchup to the snap engine. */
 async function startSeasonGame(cfg) {
+  // Set before create(), because create() emits a render and the shared-season
+  // branch of render() clears liveCfg — which left the finished game with no
+  // config to build a box score against.
+  app.liveCfg = cfg;
   app.t = new LocalTransport();
   await app.t.create({
     name: app.name, seat: app.seat,
@@ -1604,7 +1607,6 @@ async function startSeasonGame(cfg) {
     rosters: cfg.rosters, firstPossession: cfg.firstPossession,
     autoSeat: app.seat === 'OC' ? 'DC' : 'OC',
   });
-  app.liveCfg = cfg;
   app.viewSeat = app.seat;
   app.t.subscribe(render);
   show('game');
