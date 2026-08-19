@@ -701,7 +701,7 @@ const link = {
   },
   async advance() {
     if (this.local) { app.season = advanceWeek(app.season); renderSeason(); return; }
-    await api('advanceSeason', { seasonId: app.seasonId });
+    await api('advanceSeason', { seasonId: app.seasonId, ready: true });
   },
   async finish() {
     if (this.local) return;
