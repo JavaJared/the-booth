@@ -192,9 +192,9 @@ export function simRemainingWeek(season, week = season.week) {
 /** Close the week out and move the calendar forward. */
 export function advanceWeek(season) {
   let s = simRemainingWeek(season);
-  if (s.phase === 'regular' && s.week >= REGULAR_WEEKS) return startPlayoffs(s);
-  if (s.phase === 'playoffs') return advancePlayoffs(s);
-  return { ...s, week: s.week + 1 };
+  if (s.phase === 'regular' && s.week >= REGULAR_WEEKS) return clearWeekReady(startPlayoffs(s));
+  if (s.phase === 'playoffs') return clearWeekReady(advancePlayoffs(s));
+  return clearWeekReady({ ...s, week: s.week + 1 });
 }
 
 /* ------------------------------------------------------------ playoffs */
@@ -299,6 +299,28 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
 }
 
 export const OFFSEASON_STAGES = ['openings', 'interviews', 'decisions', 'scouting', 'draft'];
+
+/* ------------------------------------------ readying up during the season
+   The offseason already moves only when both coordinators agree. The weekly
+   calendar should work the same way: neither of you gets to burn a week the
+   other has not finished with. */
+
+export function setWeekReady(season, seat, ready = true) {
+  return { ...season, weekReady: { ...(season.weekReady || {}), [seat]: !!ready } };
+}
+
+/** Nobody advances until this week's game is settled. */
+export function canAdvanceWeek(season) {
+  const g = userGame(season);
+  if (!g) return true;                       // bye week, nothing to settle
+  return !!season.results.find((r) => r.id === g.id);
+}
+
+export const weekReadyBoth = (season, seats) =>
+  seats.every((s) => season.weekReady?.[s]);
+
+/** Clear the flags whenever the calendar actually moves. */
+const clearWeekReady = (season) => ({ ...season, weekReady: {} });
 export { ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS };
 
 /**
