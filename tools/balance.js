@@ -3,9 +3,9 @@
 import {
   newGameState, advance, resolveSnap, resolveSpecial, mulberry32, hashSeed,
   cpuDefensiveCall, cpuOffensiveCall, cpuFourthDown,
-  emptyTendencies, recordTendency,
-} from '../shared/engine.js';
-import { OFF_BY_ID } from '../shared/playbook.js';
+  emptyTendencies, recordTendency, resolveConversion, cpuConversion,
+} from '../public/shared/engine.js';
+import { OFF_BY_ID } from '../public/shared/playbook.js';
 
 const N = parseInt(process.argv[2] || '300', 10);
 
@@ -22,7 +22,14 @@ for (let g = 0; g < N; g++) {
   const tend = { US: emptyTendencies(), CPU: emptyTendencies() };
   let guard = 0;
 
-  while (state.status !== 'final' && guard++ < 400) {
+  while (state.status !== 'final' && guard++ < 500) {
+    // A touchdown now waits for a conversion; without resolving it the loop
+    // re-scores the same touchdown forever.
+    if (state.pendingConversion) {
+      const r = resolveConversion(state, cpuConversion(state, rng), rng);
+      state = r.state;
+      continue;
+    }
     const offSide = state.possession;
     const defSide = offSide === 'US' ? 'CPU' : 'US';
 
