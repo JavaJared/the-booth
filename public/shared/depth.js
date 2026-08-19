@@ -85,101 +85,41 @@ function ourGames(season) {
 export function depthChart(season, side) {
   const roster = season.rosters[season.userTeam];
   if (!roster) return [];
-  // Rank each position group by rating before assigning shares. A backup who
-  // outgrades the starter would otherwise be handed the starter's volume,
-  // which made a 52-rated back the leading rusher.
   const list = orderByTalent(roster[side], side);
-  const spots = side === 'offense' ? OFF_SPOTS : DEF_SPOTS;
-  const share = side === 'offense' ? OFF_SHARE : DEF_SHARE;
-  const games = ourGames(season);
-  const rng = mulberry32(hashSeed(`${season.seed}:stats:${season.year}:${side}`));
+  const us = season.userTeam;
 
-  // Unit totals for the year.
-  const tot = games.reduce((a, g) => {
-    const u = side === 'offense' ? g.off : g.def;
-    a.plays += u.plays; a.yards += u.yards; a.pass += u.passYards;
-    a.rush += u.rushYards; a.points += u.points; a.to += u.turnovers;
-    return a;
-  }, { plays: 0, yards: 0, pass: 0, rush: 0, points: 0, to: 0 });
-
-  // Rough volume for the year, scaled from games actually played.
-  const n = Math.max(1, games.length);
-  const passAtt = Math.round(tot.plays * 0.58);
-  const carries = Math.round(tot.plays * 0.40);
-  const tackles = Math.round(tot.plays * 0.82);
-  const sacks = Math.round(clamp(n * 2.3 - tot.points / 60, 12, 62));
-  const pbu = Math.round(n * 4.2);
-  const ints = Math.round(clamp(tot.to * 0.62, 0, 34));
-  const tds = Math.round(tot.points / 7.4);
-
-  // The share table describes a full depth chart, but a roster can carry more
-  // or fewer at a spot. Normalise each category so the pieces still add up to
-  // the unit's actual production rather than inflating past it.
+  // Add up every week that has actually been played.
   const totals = {};
-  for (const p of list) {
-    const sh = share[p.spot] || {};
-    for (const [k, v] of Object.entries(sh)) totals[k] = (totals[k] || 0) + v;
+  for (const r of season.results) {
+    if (!r.final || !r.players) continue;
+    if (r.home !== us && r.away !== us) continue;
+    for (const line of r.players[side] || []) {
+      const k = `${line.spot}|${line.name}`;
+      if (!totals[k]) totals[k] = { ...blank(), games: 0 };
+      const t = totals[k];
+      t.games++;
+      for (const [key, v] of Object.entries(line)) {
+        if (typeof v !== 'number') continue;
+        if (key === 'rushLong' || key === 'recLong') t[key] = Math.max(t[key] || 0, v);
+        else t[key] = (t[key] || 0) + v;
+      }
+    }
   }
-  const norm = (key, v) => (totals[key] ? v / totals[key] : 0);
-
-  // Talent weighting inside a position group.
-  const groupAvg = {};
-  for (const p of list) {
-    (groupAvg[p.pos] = groupAvg[p.pos] || []).push(p.rating);
-  }
-  const skew = (p) => {
-    const g = groupAvg[p.pos];
-    const mean = g.reduce((a, b) => a + b, 0) / g.length;
-    return clamp(1 + (p.rating - mean) / 90, 0.7, 1.35);
-  };
 
   return list.map((p) => {
-    const s = share[p.spot] || {};
-    const k = skew(p);
-    const row = {
+    const t = totals[`${p.spot}|${p.name}`] || { ...blank(), games: 0 };
+    return {
       spot: p.spot, pos: p.pos, name: p.name, number: p.number,
       rating: p.rating,
       age: p.age ?? null,
-      // A rookie for exactly one season after he was taken.
       rookie: p.draftedIn != null && p.draftedIn >= (season.year - 1),
-      starter: spots.findIndex((x) => x.id === p.spot) ===
-        spots.findIndex((x) => x.id === list.find((q) => q.pos === p.pos)?.spot),
-      games: games.length,
+      ...t,
+      sacks: halves(t.sacks),
+      tackles: Math.round(t.tackles),
     };
-    if (side === 'offense') {
-      if (s.passAtt) {
-        row.att = Math.round(passAtt * norm('passAtt', s.passAtt));
-        row.comp = Math.round(row.att * clamp(0.58 + (p.rating - 75) / 320, 0.45, 0.74));
-        row.passYards = Math.round(tot.pass * 0.94 * norm('passAtt', s.passAtt) * k);
-        row.passTD = Math.round(tds * 0.62 * norm('passAtt', s.passAtt) * k);
-        row.int = Math.round(clamp(row.att * (0.030 - (p.rating - 75) / 2600), 0, 30));
-      }
-      if (s.rush) {
-        row.carries = Math.round(carries * norm('rush', s.rush) * k);
-        row.rushYards = Math.round(tot.rush * norm('rush', s.rush) * k * 1.12);
-        row.rushTD = Math.round(tds * norm('rush', s.rush) * 0.55 * k);
-      }
-      if (s.targets) {
-        row.targets = Math.round(passAtt * norm('targets', s.targets) * k);
-        row.rec = Math.round(row.targets * clamp(0.60 + (p.rating - 75) / 300, 0.42, 0.78));
-        // Out of the same pool the quarterback threw for, so the two agree.
-        row.recYards = Math.round(tot.pass * 0.94 * norm('targets', s.targets) * k);
-        row.recTD = Math.round(tds * norm('targets', s.targets) * 0.9 * k);
-      }
-    } else {
-      row.tackles = Math.round(tackles * norm('tackles', s.tackles || 0) * k);
-      row.sacks = +(sacks * norm('sacks', s.sacks || 0) * k).toFixed(1);
-      row.pbu = Math.round(pbu * norm('pbu', s.pbu || 0) * k);
-      row.ints = Math.round(ints * norm('ints', s.ints || 0) * k);
-    }
-    return row;
   });
 }
 
-/**
- * Where the roster is weak, measured against what the position is normally
- * worth. This is the list you should be drafting from.
- */
 /**
  * Weakness by position group rather than by player. A thin fourth receiver is
  * not a draft need; a receiver room whose best two are mediocre is. Judged on
@@ -239,4 +179,184 @@ export function unitSummary(season, side) {
     agingCount: aging.length,
     youngCount: young.length,
   };
+}
+
+/* ------------------------------------------------- per-game player lines */
+
+const blank = () => ({
+  att: 0, comp: 0, passYards: 0, passTD: 0, int: 0, sacked: 0,
+  carries: 0, rushYards: 0, rushTD: 0, rushLong: 0,
+  targets: 0, rec: 0, recYards: 0, recTD: 0, recLong: 0,
+  tackles: 0, sacks: 0, pbu: 0, ints: 0, ffum: 0,
+});
+
+/** Tackles and sacks come in halves and nothing finer. */
+export const halves = (x) => Math.round(x * 2) / 2;
+
+const bump = (map, who) => {
+  if (!who?.name) return null;
+  const k = `${who.spot}|${who.name}`;
+  if (!map[k]) map[k] = { spot: who.spot, pos: who.pos, name: who.name, ...blank() };
+  return map[k];
+};
+
+/**
+ * A real box score, read off the snaps that were actually played. Used for any
+ * game a coordinator called himself — nothing is estimated here.
+ */
+export function playerLinesFromPlays(plays) {
+  const off = {}, def = {};
+  for (const p of plays) {
+    const o = p.outcome;
+    const c = o?.cast;
+    if (!c) continue;
+    if (o.penalty && o.penalty.replay) continue;   // the flag wiped the play out
+    const y = o.yards || 0;
+    const scored = (p.events || []).some((e) => e.type === 'score' && /Touchdown/.test(e.text));
+    // Our possession means our offence is on the field and the men making
+    // tackles belong to the opponent — so a snap only credits ONE of our
+    // units. Mapping both sides on every snap put the opponent's quarterback
+    // in our defensive column.
+    const ours = p.possession === 'US';
+    const oMap = ours ? off : null;      // our offence, only when we have it
+    const dMap = ours ? null : def;      // our defence, only when they do
+
+    if (!oMap && !dMap) continue;
+
+    if (oMap && c.carrier) {
+      const r = bump(oMap, c.carrier);
+      if (r) {
+        r.carries++; r.rushYards += y; r.rushLong = Math.max(r.rushLong, y);
+        if (scored) r.rushTD++;
+      }
+    } else if (oMap && c.passer) {
+      const q = bump(oMap, c.passer);
+      if (q) {
+        if (o.sack) { q.sacked++; q.passYards += y; }
+        else {
+          q.att++;
+          if (o.turnover === 'interception') q.int++;
+          if (o.complete) { q.comp++; q.passYards += y; if (scored) q.passTD++; }
+        }
+      }
+      if (c.target && !o.sack) {
+        const t = bump(oMap, c.target);
+        if (t) {
+          t.targets++;
+          if (o.complete) {
+            t.rec++; t.recYards += y; t.recLong = Math.max(t.recLong, y);
+            if (scored) t.recTD++;
+          }
+        }
+      }
+    }
+    // Our defence is credited only on snaps the opponent ran.
+    if (dMap) {
+      if (c.sacker) { const r = bump(dMap, c.sacker); if (r) { r.sacks += 1; r.tackles += 1; } }
+      if (c.interceptor) { const r = bump(dMap, c.interceptor); if (r) r.ints += 1; }
+      if (c.breakup) { const r = bump(dMap, c.breakup); if (r) r.pbu += 1; }
+      if (c.tackler) { const r = bump(dMap, c.tackler); if (r) r.tackles += 1; }
+      if (c.forced) { const r = bump(dMap, c.forced); if (r) r.ffum += 1; }
+    }
+  }
+  return { offense: Object.values(off), defense: Object.values(def) };
+}
+
+function gaussFrom(rng, mean, sd) {
+  let u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/**
+ * One week's lines for a game the staff simulated. No snaps were logged, so
+ * the week's unit totals are attributed across the depth chart — but it is
+ * done once, when the game is played, and then stored. That is what makes the
+ * season add up instead of shifting under you every render.
+ */
+export function simPlayerLines(roster, ourUnit, theirUnit, seedKey) {
+  const rng = mulberry32(hashSeed(seedKey));
+  const offList = orderByTalent(roster.offense, 'offense');
+  const defList = orderByTalent(roster.defense, 'defense');
+
+  const norm = (list, share, key) => {
+    const total = list.reduce((a, p) => a + ((share[p.spot] || {})[key] || 0), 0);
+    return (p) => (total ? ((share[p.spot] || {})[key] || 0) / total : 0);
+  };
+  const skew = (list) => {
+    const byPos = {};
+    for (const p of list) (byPos[p.pos] = byPos[p.pos] || []).push(p.rating);
+    return (p) => {
+      const g = byPos[p.pos];
+      const mean = g.reduce((a, b) => a + b, 0) / g.length;
+      return clamp(1 + (p.rating - mean) / 90, 0.7, 1.35);
+    };
+  };
+  // A weekly wobble, so a back does not carry exactly the same number of times
+  // every single week.
+  const wob = () => clamp(gaussFrom(rng, 1, 0.26), 0.4, 1.7);
+
+  const passAtt = Math.round(ourUnit.plays * 0.58);
+  const carries = Math.round(ourUnit.plays * 0.40);
+  const tds = Math.max(0, Math.round(ourUnit.points / 7.4));
+
+  const oSkew = skew(offList);
+  const nPass = norm(offList, OFF_SHARE, 'passAtt');
+  const nRush = norm(offList, OFF_SHARE, 'rush');
+  const nTgt = norm(offList, OFF_SHARE, 'targets');
+
+  const offense = offList.map((p) => {
+    const k = oSkew(p);
+    const row = { spot: p.spot, pos: p.pos, name: p.name, ...blank() };
+    const pa = nPass(p), ru = nRush(p), tg = nTgt(p);
+    if (pa > 0) {
+      row.att = Math.round(passAtt * pa * wob());
+      row.comp = Math.round(row.att * clamp(0.58 + (p.rating - 75) / 320, 0.42, 0.76));
+      row.passYards = Math.round(ourUnit.passYards * pa * k * wob());
+      row.passTD = Math.round(tds * 0.62 * pa * wob());
+      row.int = Math.max(0, Math.round(row.att * (0.030 - (p.rating - 75) / 2600) * wob()));
+    }
+    if (ru > 0) {
+      row.carries = Math.round(carries * ru * k * wob());
+      row.rushYards = Math.round(ourUnit.rushYards * ru * k * wob());
+      row.rushTD = Math.round(tds * ru * 0.55 * wob());
+      row.rushLong = row.carries
+        ? Math.max(1, Math.round((row.rushYards / Math.max(1, row.carries))
+            * clamp(gaussFrom(rng, 3.1, 1.2), 1.2, 7))) : 0;
+    }
+    if (tg > 0) {
+      row.targets = Math.round(passAtt * tg * k * wob());
+      row.rec = Math.round(row.targets * clamp(0.60 + (p.rating - 75) / 300, 0.40, 0.80));
+      row.recYards = Math.round(ourUnit.passYards * tg * k * wob());
+      row.recTD = Math.round(tds * tg * 0.9 * wob());
+      row.recLong = row.rec
+        ? Math.max(1, Math.round((row.recYards / Math.max(1, row.rec))
+            * clamp(gaussFrom(rng, 2.4, 0.9), 1.1, 5))) : 0;
+    }
+    return row;
+  });
+
+  const dSkew = skew(defList);
+  const nTkl = norm(defList, DEF_SHARE, 'tackles');
+  const nSk = norm(defList, DEF_SHARE, 'sacks');
+  const nPbu = norm(defList, DEF_SHARE, 'pbu');
+  const nInt = norm(defList, DEF_SHARE, 'ints');
+  const tackles = Math.round(theirUnit.plays * 0.82);
+  const sacks = clamp(gaussFrom(rng, 2.3, 1.3), 0, 8);
+  const pbu = Math.round(clamp(gaussFrom(rng, 4.2, 1.8), 0, 12));
+
+  const defense = defList.map((p) => {
+    const k = dSkew(p);
+    return {
+      spot: p.spot, pos: p.pos, name: p.name, ...blank(),
+      tackles: Math.round(tackles * nTkl(p) * k * wob()),
+      sacks: halves(sacks * nSk(p) * k * wob()),
+      pbu: Math.round(pbu * nPbu(p) * k * wob()),
+      ints: rng() < theirUnit.turnovers * nInt(p) * 1.4 ? 1 : 0,
+      ffum: rng() < nTkl(p) * 0.30 ? 1 : 0,
+    };
+  });
+
+  return { offense, defense };
 }
