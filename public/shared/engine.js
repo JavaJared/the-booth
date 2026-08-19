@@ -339,6 +339,94 @@ function elapsedFor(state, outcome, tempo = 'normal') {
 }
 
 // ---------------------------------------------------------------- State
+export const XP_PROB = 0.94;
+export const TWO_POINT_PROB = 0.485;
+
+/**
+ * The play after a touchdown. Kicking is nearly automatic; going for two is a
+ * real coin flip, which is what makes the decision worth having.
+ */
+export function resolveConversion(state, choice, rng) {
+  const s = JSON.parse(JSON.stringify(state));
+  const events = [];
+  const pc = s.pendingConversion;
+  if (!pc) return { state: s, events, outcome: null };
+  const key = pc.scoreKey;
+
+  let outcome;
+  if (choice === 'two') {
+    const good = rng() < TWO_POINT_PROB;
+    if (good) s.score[key] += 2;
+    events.push({ type: good ? 'score' : 'miss',
+      text: good ? 'Two point conversion is good.' : 'Two point try is no good.' });
+    outcome = { desc: good ? 'Two point conversion is good.' : 'Two point try fails.',
+      special: 'two', made: good, yards: 0 };
+  } else {
+    const good = rng() < XP_PROB;
+    if (good) s.score[key] += 1;
+    events.push({ type: good ? 'score' : 'miss',
+      text: good ? 'Extra point is good.' : 'Extra point is missed.' });
+    outcome = { desc: good ? 'Extra point is good.' : 'Extra point is no good.',
+      special: 'xp', made: good, yards: 0 };
+  }
+
+  s.pendingConversion = null;
+  s.playIndex += 1;
+  s.clock = Math.max(0, s.clock - 4);
+  // Kick off to the other side.
+  s.possession = pc.team === 'US' ? 'CPU' : 'US';
+  s.ballOn = 25;
+  s.clockStopped = true;
+  s.down = 1;
+  s.distance = 10;
+  s.driveIndex += 1;
+  s.drivePlays = 0;
+  s.driveStartYard = 25;
+  s.lastPlay = outcome;
+  return finishState(s, events, outcome);
+}
+
+/** Shared period handling, so a conversion rolls the clock like anything else. */
+function finishState(s, events, outcome) {
+  const r = finish(s, events, outcome, {});
+  return { ...r, outcome };
+}
+
+/**
+ * Should the CPU go for two? Uses the standard chart: the decision is about
+ * which margin the extra point leaves you needing.
+ */
+export function cpuConversion(state, rng) {
+  const pc = state.pendingConversion;
+  if (!pc) return 'kick';
+  const mine = pc.scoreKey;
+  const theirs = mine === 'us' ? 'them' : 'us';
+  const lead = state.score[mine] - state.score[theirs];
+  const late = state.quarter >= 4 || (state.quarter === 3 && state.clock < 300);
+
+  // Margins where two points changes what you need next.
+  const GO = [-10, -5, -2, 1, 4, 5, 12, 19];
+  if (late && GO.includes(lead)) return 'two';
+  if (state.quarter >= 4 && state.clock < 120 && lead < 0) return 'two';
+  return rng() < 0.04 ? 'two' : 'kick';
+}
+
+/**
+ * Spend a timeout. Stops the clock, which is the whole point of having them.
+ */
+export function callTimeout(state, side) {
+  const s = JSON.parse(JSON.stringify(state));
+  const key = side === 'US' ? 'us' : 'them';
+  if ((s.timeouts?.[key] || 0) <= 0) return { state, events: [], spent: false };
+  s.timeouts[key] -= 1;
+  s.clockStopped = true;
+  return {
+    state: s,
+    events: [{ type: 'timeout', text: `Timeout${side === 'US' ? '' : ', defense'}.` }],
+    spent: true,
+  };
+}
+
 export function newGameState(cfg = {}) {
   return {
     quarter: 1,
@@ -355,6 +443,7 @@ export function newGameState(cfg = {}) {
     drivePlays: 0,
     clockStopped: true,
     timeouts: { us: 3, them: 3 },
+    pendingConversion: null,
     status: 'live',
     lastPlay: null,
   };
@@ -392,9 +481,12 @@ export function advance(prev, outcome, opts = {}) {
     s.ballOn = clamp(100 - spot - ret, 1, 99);
     if (100 - spot - ret <= 0) {
       // returned for a score
-      s.score[offenseIsUs ? 'them' : 'us'] += 7;
+      const key = offenseIsUs ? 'them' : 'us';
+      s.score[key] += 6;
       events.push({ type: 'score', text: `Returned all the way — touchdown.` });
-      return kickoff(s, events, other(s.possession), outcome, opts);
+      s.pendingConversion = { team: s.possession, scoreKey: key };
+      s.clockStopped = true;
+      return finish(s, events, outcome, opts);
     }
     events.push({ type: 'turnover', text: outcome.desc });
     return newDrive(s, events, outcome, opts);
@@ -403,9 +495,13 @@ export function advance(prev, outcome, opts = {}) {
   s.ballOn = s.ballOn + outcome.yards;
 
   if (s.ballOn >= 100) {
-    s.score[scoreKey] += 7; // TD + assumed XP
+    s.score[scoreKey] += 6;
     events.push({ type: 'score', text: 'Touchdown!' });
-    return kickoff(s, events, other(s.possession), outcome, opts);
+    // The conversion is a decision, not an assumption. Play stops here until
+    // somebody chooses the kick or the two point try.
+    s.pendingConversion = { team: s.possession, scoreKey };
+    s.clockStopped = true;
+    return finish(s, events, outcome, opts);
   }
   if (s.ballOn <= 0) {
     s.score[offenseIsUs ? 'them' : 'us'] += 2;
