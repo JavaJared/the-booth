@@ -10,6 +10,7 @@ import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
 import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
 import { playerLinesFromPlays, simPlayerLines } from './depth.js';
+import { seasonAwards, staffHonours } from './awards.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
   scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
 import { makeCoaches, firings, openingFor, resumeScore, careerScore, invitesFor,
@@ -263,6 +264,9 @@ function advancePlayoffs(season) {
 /** Black Monday: work out who was fired and who wants to talk to you. */
 export function startOffseason(season, seats = ['OC', 'DC']) {
   const coaches = makeCoaches(season.seed);
+  // Vote on the year before anyone gets fired, so the awards reflect the
+  // season that was just played rather than the carousel that follows it.
+  const honours = season.awards || seasonAwards({ ...season, carousel: { coaches } });
   const openings = firings(season, coaches).map((t) => openingFor(t, season, coaches));
   const resumes = Object.fromEntries(seats.map((s) => [s, resume(season, s)]));
 
@@ -278,6 +282,7 @@ export function startOffseason(season, seats = ['OC', 'DC']) {
   return {
     ...season,
     phase: 'offseason',
+    awards: honours,
     carousel: {
       coaches, openings, invited,
       resumeScores: Object.fromEntries(seats.map((s) =>
@@ -659,6 +664,7 @@ export function archiveSeason(season, seats = ['OC', 'DC']) {
     const r = resume(season, seat);
     years[seat] = {
       year: season.year,
+      honours: staffHonours(season.awards, seat, season.userTeam).map((h) => h.key),
       team: season.userTeam,
       w: rec.w, l: rec.l, t: rec.t,
       madePlayoffs, champion: champ,
