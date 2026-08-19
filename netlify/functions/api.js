@@ -487,7 +487,7 @@ const actions = {
     });
   },
 
-  async submitCall(uid, { gameId, playIndex, callId, special, auto }) {
+  async submitCall(uid, { gameId, playIndex, callId, special, auto, conversion, timeout }) {
     const ref = gameRef(gameId);
     const plays = await store().runTransaction(async (tx) => {
       const snap = await tx.get(ref);
@@ -505,7 +505,7 @@ const actions = {
         }
       }
 
-      const sim = runToNextDecision(gameId, g, { callId, special });
+      const sim = runToNextDecision(gameId, g, { callId, special, conversion, timeout });
       tx.update(ref, {
         state: sim.state,
         tendencies: sim.tendencies,
