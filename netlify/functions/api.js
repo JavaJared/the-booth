@@ -630,9 +630,10 @@ const actions = {
     });
   },
 
-  async submitCall(uid, { gameId, playIndex, callId, special, auto, conversion, timeout }) {
+  async submitCall(uid, { gameId, playIndex, callId, special, auto, conversion, timeout }, timings = {}) {
     const ref = gameRef(gameId);
-    const plays = await store().runTransaction(async (tx) => {
+    const firestoreStarted = performance.now();
+    const result = await store().runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new ApiError(404, 'No such game.');
       const g = snap.data();
@@ -670,24 +671,47 @@ const actions = {
         }
       }
 
+      const simulationStarted = performance.now();
       const sim = runToNextDecision(gameId, g, { callId, special, conversion, timeout });
+      timings.simulation = (timings.simulation || 0) + performance.now() - simulationStarted;
+      const status = sim.state.status === 'final' ? 'final' : 'live';
+      const deadline = status === 'final' ? null : Date.now() + PLAY_CLOCK_MS;
       tx.update(ref, {
         state: sim.state,
         tendencies: sim.tendencies,
         filmPoints: sim.filmPoints,
-        status: sim.state.status === 'final' ? 'final' : 'live',
+        status,
         'pending.playIndex': sim.state.playIndex,
         'pending.prediction': null,
         'pending.hint': null,
-        'pending.deadline': sim.state.status === 'final' ? null : Date.now() + PLAY_CLOCK_MS,
+        'pending.deadline': deadline,
       });
-      return sim.plays;
+      // Keep the authoritative state and the play log atomic. This used to be
+      // a second batch commit after the transaction, adding another database
+      // round trip to every snap and briefly exposing state without its plays.
+      for (const p of sim.plays) {
+        tx.set(ref.collection('plays').doc(String(p.playIndex)), p);
+      }
+      return {
+        game: {
+          ...g,
+          state: sim.state,
+          tendencies: sim.tendencies,
+          filmPoints: sim.filmPoints,
+          status,
+          pending: {
+            ...(g.pending || {}),
+            playIndex: sim.state.playIndex,
+            prediction: null,
+            hint: null,
+            deadline,
+          },
+        },
+        plays: sim.plays,
+      };
     });
-
-    const batch = store().batch();
-    for (const p of plays) batch.set(ref.collection('plays').doc(String(p.playIndex)), p);
-    await batch.commit();
-    return { ok: true, plays: plays.length };
+    timings.firestore = performance.now() - firestoreStarted;
+    return { ok: true, game: result.game, plays: result.plays };
   },
 
   async submitPrediction(uid, { gameId, playIndex, guess }) {
@@ -772,22 +796,40 @@ export default async (req) => {
   if (req.method === 'OPTIONS') return new Response('', { status: 204 });
   if (req.method !== 'POST') return json({ error: 'POST only.' }, 405);
 
+  const started = performance.now();
+  const timings = {};
   try {
     const token = (req.headers.get('authorization') || '').replace(/^Bearer /, '');
     if (!token) throw new ApiError(401, 'Sign in first.');
+    const authStarted = performance.now();
     const { uid } = await getAuth(admin()).verifyIdToken(token);
+    timings.auth = performance.now() - authStarted;
 
     const { action, data = {} } = await req.json();
     const fn = actions[action];
     if (!fn) throw new ApiError(400, `Unknown action ${action}.`);
 
-    return json({ data: await fn(uid, data) });
+    const actionStarted = performance.now();
+    const result = await fn(uid, data, timings);
+    timings.action = performance.now() - actionStarted;
+    timings.total = performance.now() - started;
+    return json({ data: result }, 200, { 'server-timing': serverTiming(timings) });
   } catch (err) {
     const status = err.status || 500;
     if (status >= 500) console.error(err);
-    return json({ error: err.message || 'Something went wrong.' }, status);
+    timings.total = performance.now() - started;
+    return json({ error: err.message || 'Something went wrong.' }, status,
+      { 'server-timing': serverTiming(timings) });
   }
 };
 
-const json = (body, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const serverTiming = (timings) => Object.entries(timings)
+  .filter(([, duration]) => Number.isFinite(duration))
+  .map(([name, duration]) => `${name};dur=${duration.toFixed(1)}`)
+  .join(', ');
+
+const json = (body, status = 200, headers = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...headers },
+  });

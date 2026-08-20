@@ -109,24 +109,71 @@ class LocalTransport {
 }
 
 class FirebaseTransport {
-  constructor(fb) { Object.assign(this, fb); this.plays = []; this.listeners = []; this.local = false; }
+  constructor(fb) {
+    Object.assign(this, fb);
+    this.plays = [];
+    this.playById = new Map();
+    this.listeners = [];
+    this.unsubs = [];
+    this.emitFrame = null;
+    this.local = false;
+  }
   subscribe(f) { this.listeners.push(f); if (this.game) f(this.game, this.plays); }
   emit() { this.listeners.forEach((f) => f(this.game, this.plays)); }
+  queueEmit() {
+    if (this.emitFrame != null) return;
+    this.emitFrame = requestAnimationFrame(() => {
+      this.emitFrame = null;
+      this.emit();
+    });
+  }
+  mergePlays(plays) {
+    for (const p of plays || []) this.playById.set(String(p.playIndex), p);
+    this.plays = [...this.playById.values()].sort((a, b) => a.playIndex - b.playIndex);
+  }
+  applyCallResult(result) {
+    if (!result?.game) return;
+    // A rival's newer snapshot may beat this response back to the browser.
+    // Never replace it with an older state from our completed request.
+    const currentIndex = this.game?.state?.playIndex ?? -1;
+    const resultIndex = result.game.state?.playIndex ?? -1;
+    if (resultIndex >= currentIndex) this.game = result.game;
+    this.mergePlays(result.plays);
+    this.queueEmit();
+  }
+  stop() {
+    for (const unsub of this.unsubs) unsub();
+    this.unsubs = [];
+    if (this.emitFrame != null) cancelAnimationFrame(this.emitFrame);
+    this.emitFrame = null;
+  }
 
   watch(gameId) {
+    this.stop();
     this.gameId = gameId;
     const { onSnapshot, doc, collection, query, orderBy, db } = this;
-    onSnapshot(doc(db, 'games', gameId), (s) => { this.game = s.data(); this.emit(); });
-    onSnapshot(query(collection(db, 'games', gameId, 'plays'), orderBy('playIndex')), (s) => {
-      this.plays = s.docs.map((d) => d.data()); this.emit();
-    });
+    this.playById.clear();
+    this.plays = [];
+    this.unsubs.push(
+      onSnapshot(doc(db, 'games', gameId), (s) => { this.game = s.data(); this.queueEmit(); }),
+      onSnapshot(query(collection(db, 'games', gameId, 'plays'), orderBy('playIndex')), (s) => {
+        for (const change of s.docChanges()) {
+          if (change.type === 'removed') this.playById.delete(change.doc.id);
+          else this.playById.set(change.doc.id, change.doc.data());
+        }
+        this.plays = [...this.playById.values()].sort((a, b) => a.playIndex - b.playIndex);
+        this.queueEmit();
+      }),
+    );
   }
   async create(opts) { const r = await this.fn('createGame')(opts); this.mySeat = r.data.seat; this.watch(r.data.gameId); return r.data; }
   async join(gameId, displayName) { const r = await this.fn('joinGame')({ gameId, displayName }); this.mySeat = r.data.seat; this.watch(gameId); return r.data; }
   async ready(ready) { return this.fn('setReady')({ gameId: this.gameId, ready }); }
   async call({ callId, special, auto, conversion, timeout }) {
-    return this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex,
+    const response = await this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex,
       callId, special, auto, conversion, timeout });
+    this.applyCallResult(response.data);
+    return response.data;
   }
   async predict(guess) { return this.fn('submitPrediction')({ gameId: this.gameId, playIndex: this.game.state.playIndex, guess }); }
   async plan(_seat, plan) { return this.fn('setGameplan')({ gameId: this.gameId, plan }); }
@@ -265,12 +312,22 @@ async function connectFirebase({ anonymous = false } = {}) {
   // read-only). Every write goes through the serverless API, which is the only
   // thing holding admin credentials.
   const call = async (action, data) => {
+    const started = performance.now();
     const token = await a.currentUser.getIdToken();
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ action, data }),
     });
+    const totalMs = performance.now() - started;
+    const timing = {
+      action,
+      totalMs: Math.round(totalMs * 10) / 10,
+      serverTiming: res.headers.get('server-timing') || '',
+      at: Date.now(),
+    };
+    window.__boothTimings = [...(window.__boothTimings || []).slice(-49), timing];
+    if (totalMs >= 750) console.info('[The Booth] slow request', timing);
     const body = await res.json().catch(() => ({ error: 'Server did not respond.' }));
     if (!res.ok) throw new Error(body.error || `Request failed (${res.status}).`);
     return body;
@@ -932,8 +989,24 @@ export function clearSeason() { try { localStorage.removeItem(SAVE_KEY); } catch
    Firestore. Everything the week pane calls goes through here. */
 /** Every server call goes through here, so a rejection surfaces instead of
     disappearing into an unhandled promise. */
-function run(p) {
-  return Promise.resolve(p).catch((e) => flash(e.message || 'That did not work.'));
+function run(p, button = null, pendingText = 'Working…') {
+  const pending = button instanceof HTMLButtonElement;
+  const original = pending ? { html: button.innerHTML, disabled: button.disabled } : null;
+  if (pending) {
+    button.disabled = true;
+    button.classList.add('is-pending');
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = pendingText;
+  }
+  return Promise.resolve(p)
+    .catch((e) => flash(e.message || 'That did not work.'))
+    .finally(() => {
+      if (!pending) return;
+      button.innerHTML = original.html;
+      button.disabled = original.disabled;
+      button.classList.remove('is-pending');
+      button.removeAttribute('aria-busy');
+    });
 }
 
 const link = {
@@ -1041,6 +1114,7 @@ function watchSeason(fb, seasonId, seat) {
 
     if (doc.currentGameId && attached !== doc.currentGameId) {
       attached = doc.currentGameId;
+      app.t?.stop?.();
       const t = new FirebaseTransport(fb);
       t.mySeat = seat;
       app.t = t;
@@ -1051,6 +1125,7 @@ function watchSeason(fb, seasonId, seat) {
     }
     if (!doc.currentGameId) {
       attached = null;
+      app.t?.stop?.();
       app.t = null;
       show('season');
       renderSeason();
@@ -1060,6 +1135,7 @@ function watchSeason(fb, seasonId, seat) {
 
 $('btn-home').addEventListener('click', async () => {
   if (app.seasonUnsub) { app.seasonUnsub(); app.seasonUnsub = null; }
+  app.t?.stop?.();
   app.t = null;
   app.inSeason = false;
   show('setup');
@@ -1181,9 +1257,9 @@ function paneWeek(pane, S) {
       const actions = el('div', 'matchup-actions');
       const mine = app.seasonDoc?.vote?.[app.seat] || null;
       const call = el('button', 'btn' + (mine === 'call' ? ' btn-primary' : ''), 'Call the game');
-      call.addEventListener('click', () => run(link.vote('call')));
+      call.addEventListener('click', () => run(link.vote('call'), call, 'Saving…'));
       const sim = el('button', 'btn' + (mine === 'sim' ? ' btn-primary' : ''), 'Let the staff handle it');
-      sim.addEventListener('click', () => run(link.vote('sim')));
+      sim.addEventListener('click', () => run(link.vote('sim'), sim, 'Saving…'));
       actions.append(call, sim);
       box.append(actions);
 
@@ -1230,7 +1306,7 @@ function paneWeek(pane, S) {
       renderSeason();
       return;
     }
-    run(link.advance());
+    run(link.advance(), btn, S.phase === 'done' ? 'Opening Black Monday…' : 'Advancing…');
   });
   next.append(btn);
   if (!ready) next.append(el('p', 'scout-note', 'Play or sim your game first.'));
@@ -1343,7 +1419,7 @@ function paneOffseason(pane, S) {
   };
   const b = el('button', 'btn' + (iAmReady ? '' : ' btn-primary'), iAmReady ? 'Waiting…' : labels[stage]);
   b.disabled = !canReady(S, seat) || iAmReady;
-  b.addEventListener('click', () => run(link.ready(true)));
+  b.addEventListener('click', () => run(link.ready(true), b, 'Saving…'));
   box.append(b);
 
   if (!canReady(S, seat)) {
@@ -1426,10 +1502,10 @@ function paneScouting(pane, S, seat) {
     const acts = el('div', 'prospect-acts');
     const look = el('button', 'btn btn-tiny', `Scout (${p.scouted}/4)`);
     look.disabled = left <= 0 || p.scouted >= 4;
-    look.addEventListener('click', () => run(link.scoutLook(p.id)));
+    look.addEventListener('click', () => run(link.scoutLook(p.id), look, 'Scouting…'));
     const bd = el('button', 'btn btn-tiny', on ? 'On your board' : 'Add to board');
     bd.disabled = !on && boarded.length >= BOARD_MAX;
-    bd.addEventListener('click', () => run(link.board(p.id)));
+    bd.addEventListener('click', () => run(link.board(p.id), bd, 'Saving…'));
     acts.append(look, bd);
     card.append(acts);
     wrap.append(card);
@@ -1445,7 +1521,7 @@ function paneScouting(pane, S, seat) {
         `<button class="btn btn-tiny" data-sign="${f.id}">Sign</button>`]))
       + noteEl('Veterans have public tape, so the rating is real. The risk is age.')));
   pane.querySelectorAll('[data-sign]').forEach((b) => b.addEventListener('click', () =>
-    run(link.sign(b.dataset.sign))));
+    run(link.sign(b.dataset.sign), b, 'Signing…')));
 }
 
 const DZG = { group: null };
@@ -1524,12 +1600,12 @@ function paneDraft(pane, S, seat) {
       ? table(['', 'Grade', 'Status', ''], rows)
       : note('You never put anyone on your board. Nothing to argue for.')));
     pane.querySelectorAll('[data-adv]').forEach((b) => b.addEventListener('click', () =>
-      run(link.advocate(b.dataset.adv, Number(b.dataset.amt)))));
+      run(link.advocate(b.dataset.adv, Number(b.dataset.amt)), b, 'Saving…')));
   }
 
   const acts = el('div', 'season-actions');
   const btn = el('button', 'btn btn-primary', ours ? 'Let him make the pick' : 'Run the next picks');
-  btn.addEventListener('click', () => run(link.runPicks(ours)));
+  btn.addEventListener('click', () => run(link.runPicks(ours), btn, 'Running picks…'));
   acts.append(btn);
   pane.append(acts);
 }

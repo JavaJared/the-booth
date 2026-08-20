@@ -58,6 +58,11 @@ h1,h2{margin:0}
 .btn-tiny{padding:.22rem .55rem;font-size:.7rem;box-shadow:1px 1px 0 var(--ink-3);
   border-color:var(--ink-3)}
 .btn:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:1px 1px 0 var(--ink-3)}
+.btn.is-pending:disabled{opacity:.72;cursor:wait}
+.btn.is-pending::after{content:'';display:inline-block;width:.7em;height:.7em;margin-left:.55em;
+  border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;
+  animation:spin .65s linear infinite;vertical-align:-.05em}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* ---------- setup / lobby ---------- */
 #setup,#lobby{display:grid;place-items:center;padding:2.5rem 1.25rem}
