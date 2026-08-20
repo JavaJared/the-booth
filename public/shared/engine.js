@@ -698,11 +698,15 @@ export function cpuOffensiveCall(state, tendencies, rng, identity = {}) {
   // where one family drowns out the rest by the second quarter.
   const probs = priorFor(state);
   const lean = identity.runLean || 0;
-  const cands = OFFENSE.map((off) => {
+  // Installed user concepts belong to that coordinator, not every CPU club in
+  // the league. Keeping the opponent pool built-in also makes its advance film
+  // stable and guarantees every scouted call has a diagram.
+  const cands = OFFENSE.filter((off) => !off.custom).map((off) => {
     // Spread the family's probability across the plays inside it, otherwise
     // whichever family has the most plays gets picked far too often.
     let score = (probs[off.family] / FAMILY_SIZE[off.family]) * 9.0;
     if (off.family === 'run') score += lean * 0.12;
+    score += identity.playLeans?.[off.id] || 0;
     // Situational sanity.
     if (state.distance <= 2 && off.id === 'sneak') score += 0.30;
     else if (off.id === 'sneak') score -= 2;

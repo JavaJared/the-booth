@@ -15,6 +15,10 @@ import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, 
   scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
 import { makeCoaches, firings, openingFor, resumeScore, careerScore, invitesFor,
   interviewQuestions, interviewScore, rivalPool, hire } from './carousel.js';
+import {
+  FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SIM_GRANT,
+  filmFromPlays, hasCall, mergeFilmBooks, simulatedGameFilm, teamOffensiveIdentity,
+} from './film.js';
 
 export const REGULAR_WEEKS = 18;
 const ROUND_NAMES = { 19: 'Wild Card', 20: 'Divisional', 21: 'Conference Championship', 22: 'The Final' };
@@ -33,6 +37,36 @@ export function createSeason({ seed, userTeam, year = 2026 }) {
  */
 export function hydrate(saved) {
   saved = { ...saved, results: dedupeResults(saved.results || []) };
+  if (!saved.filmBook) {
+    saved.filmBook = saved.results.filter((r) => r.simulated).reduce((book, r) =>
+      mergeFilmBooks(book, simulatedGameFilm(saved.seed, r.id, r.home, r.away,
+      r.homeStats?.plays, r.awayStats?.plays)), {});
+  }
+  if (!saved.lastGameFilm) {
+    const latest = [...saved.results].filter((r) =>
+      r.home === saved.userTeam || r.away === saved.userTeam)
+      .sort((a, b) => (b.week || 0) - (a.week || 0))[0];
+    if (latest?.simulated) {
+      saved.lastGameFilm = {
+        week: latest.week,
+        opponent: latest.home === saved.userTeam ? latest.away : latest.home,
+        detailed: false,
+        book: simulatedGameFilm(saved.seed, latest.id, latest.home, latest.away,
+          latest.homeStats?.plays, latest.awayStats?.plays),
+      };
+    }
+  }
+  if (!saved.filmBank) {
+    const priorGames = saved.results.filter((r) =>
+      r.home === saved.userTeam || r.away === saved.userTeam);
+    saved.filmBank = {
+      OC: 0,
+      DC: priorGames.reduce((points, r) =>
+        points + (r.played ? FILM_GAME_GRANT : FILM_SIM_GRANT), 0),
+    };
+  }
+  saved.filmBank = { OC: 0, DC: 0, ...saved.filmBank };
+  saved.filmOverlays = { OC: [], DC: [], ...(saved.filmOverlays || {}) };
   registerSeasonCalls(saved);
   if (saved.rosters && saved.schedule) return saved;
   const ids = TEAMS.map((t) => t.id);
@@ -114,6 +148,43 @@ export function liveConfig(season, game) {
     themRecord: record(season, them),
     rosters: { US: season.rosters[us], CPU: season.rosters[them] },
     firstPossession: mulberry32(hashSeed(`${season.seed}:${game.id}:toss`))() < 0.5 ? 'US' : 'CPU',
+    seasonSeed: season.seed,
+    cpuIdentity: teamOffensiveIdentity(season.seed, them),
+  };
+}
+
+/** Preserve the useful part of a called game's snap log and award weekly film. */
+export function recordGameFilm(season, plays, cfg, earned = {}) {
+  const gameBook = filmFromPlays(plays, cfg);
+  const opponent = cfg.them;
+  return {
+    ...season,
+    filmBook: mergeFilmBooks(season.filmBook, gameBook),
+    lastGameFilm: {
+      week: season.week,
+      opponent,
+      detailed: true,
+      book: gameBook,
+    },
+    filmBank: {
+      OC: season.filmBank?.OC || 0,
+      DC: (season.filmBank?.DC || 0) + FILM_GAME_GRANT + Math.max(0, earned?.DC || 0),
+    },
+  };
+}
+
+/** Buy permanent access to one opponent concept in the defensive designer. */
+export function unlockFilmOverlay(season, seat, teamId, callId) {
+  if (seat !== 'DC' || !hasCall(season.filmBook, teamId, 'offense', callId)) return season;
+  const key = `${teamId}:${callId}`;
+  const unlocked = season.filmOverlays?.[seat] || [];
+  if (unlocked.includes(key)) return season;
+  const balance = season.filmBank?.[seat] || 0;
+  if (balance < FILM_OVERLAY_COST) return season;
+  return {
+    ...season,
+    filmBank: { ...season.filmBank, [seat]: balance - FILM_OVERLAY_COST },
+    filmOverlays: { ...season.filmOverlays, [seat]: [...unlocked, key] },
   };
 }
 
@@ -174,12 +245,18 @@ export function simRemainingWeek(season, week = season.week) {
     ? (season.playoffs?.games || []).filter((g) => g.week === week)
     : weekGames(season, week)).filter((g) => !done.has(g.id));
   const us = season.userTeam;
+  let filmBook = season.filmBook || {};
+  let lastGameFilm = season.lastGameFilm || null;
+  let filmBank = { OC: 0, DC: 0, ...(season.filmBank || {}) };
   const fresh = pending.map((g) => {
     const r = {
       ...simGame(g.id, g.home, g.away, season.strength, season.seed),
       week,
       playoff: season.phase === 'playoffs',
     };
+    const gameBook = simulatedGameFilm(season.seed, g.id, g.home, g.away,
+      r.homeStats?.plays, r.awayStats?.plays);
+    filmBook = mergeFilmBooks(filmBook, gameBook);
     // Attribute the week's box score once, here, rather than re-deriving the
     // whole season every time the roster page renders.
     if (g.home === us || g.away === us) {
@@ -187,10 +264,23 @@ export function simRemainingWeek(season, week = season.week) {
       const theirs = g.home === us ? r.awayStats : r.homeStats;
       r.players = simPlayerLines(season.rosters[us], ours, theirs,
         `${season.seed}:${g.id}`);
+      lastGameFilm = {
+        week,
+        opponent: g.home === us ? g.away : g.home,
+        detailed: false,
+        book: gameBook,
+      };
+      filmBank = { ...filmBank, DC: filmBank.DC + FILM_SIM_GRANT };
     }
     return r;
   });
-  return { ...season, results: dedupeResults([...season.results, ...fresh]) };
+  return {
+    ...season,
+    results: dedupeResults([...season.results, ...fresh]),
+    filmBook,
+    lastGameFilm,
+    filmBank,
+  };
 }
 
 /** Close the week out and move the calendar forward. */
@@ -731,6 +821,8 @@ export function nextSeason(season, seats = ['OC', 'DC']) {
     week: 1, phase: 'regular', results: [], playoffs: null,
     customPlays: season.customPlays || [],
     customDefenses: season.customDefenses || [],
+    filmBank: season.filmBank,
+    filmOverlays: season.filmOverlays,
     rosters,
     career,
     careerYears: (season.careerYears || 1) + 1,

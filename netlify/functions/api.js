@@ -14,7 +14,7 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   setWeekReady, canAdvanceWeek, weekReadyBoth,
   openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
   startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
-  weekLabel, finishedGameRecorded } from '../../public/shared/season.js';
+  weekLabel, finishedGameRecorded, recordGameFilm, unlockFilmOverlay } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
@@ -315,6 +315,7 @@ const actions = {
           usRecord: cfg.usRecord, themRecord: cfg.themRecord,
           rosters: cfg.rosters,
           atHome: cfg.atHome, us: cfg.us, them: cfg.them,
+          seasonSeed: cfg.seasonSeed, cpuIdentity: cfg.cpuIdentity,
           seats: {
             ...(doc.seats.OC ? { OC: { ...doc.seats.OC, ready: false } } : {}),
             ...(doc.seats.DC ? { DC: { ...doc.seats.DC, ready: false } } : {}),
@@ -378,7 +379,8 @@ const actions = {
     result.playoff = doc.phase === 'playoffs';
     result.gameDocId = doc.currentGameId;
 
-    const withResult = { ...season, results: [...season.results, result] };
+    const withResult = recordGameFilm(
+      { ...season, results: [...season.results, result] }, plays, cfg, game.filmPoints);
     const closed = simRemainingWeek(withResult);
     await seasonRef(seasonId).update({
       ...dehydrate(closed),
@@ -386,6 +388,25 @@ const actions = {
       currentGameId: null,
     });
     return { ok: true };
+  },
+
+  async unlockFilmOverlay(uid, { seasonId, teamId, callId }) {
+    return store().runTransaction(async (tx) => {
+      const ref = seasonRef(seasonId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ApiError(404, 'No season with that code.');
+      const doc = snap.data();
+      const seat = doc.seats?.DC?.uid === uid ? 'DC' : doc.seats?.OC?.uid === uid ? 'OC' : null;
+      if (seat !== 'DC') throw new ApiError(403, 'Opponent play overlays belong to the defense.');
+      const season = hydrate(doc);
+      const next = unlockFilmOverlay(season, seat, teamId, callId);
+      if (next === season) throw new ApiError(409, 'That overlay is unavailable or you need more film.');
+      tx.update(ref, {
+        filmBank: next.filmBank,
+        filmOverlays: next.filmOverlays,
+      });
+      return { balance: next.filmBank[seat], key: `${teamId}:${callId}` };
+    });
   },
 
   /**

@@ -7,6 +7,7 @@ import {
 } from './engine.js';
 import { OFF_BY_ID, DEF_BY_ID } from './playbook.js';
 import { makeRosters } from './roster.js';
+import { teamOffensiveIdentity } from './film.js';
 
 export const PLAY_CLOCK_MS = 45000;
 export const FILM_COST = 3;
@@ -41,7 +42,9 @@ export function keyRead(gameId, game) {
     const heat = d.rush > 4 ? ', extra rusher' : d.box >= 8 ? ', loaded box' : '';
     return `Keys say ${shell}${heat}.`;
   }
-  const o = OFF_BY_ID[cpuOffensiveCall(state, game.tendencies.CPU, rng, { runLean: 0.1 })];
+  const identity = game.cpuIdentity || teamOffensiveIdentity(game.seasonSeed || gameId,
+    game.them || game.oppName || 'CPU');
+  const o = OFF_BY_ID[cpuOffensiveCall(state, game.tendencies.CPU, rng, identity)];
   const bucket = { run: 'run', shot: 'a shot downfield', screen: 'a screen',
     playaction: 'play action', quick: 'the quick game', dropback: 'a called pass' }[o.family];
   return `Splits and personnel point to ${bucket}.`;
@@ -89,6 +92,8 @@ export function runToNextDecision(gameId, game, humanCall) {
   const autoSeat = game.autoSeat || null;
   // A season hands us the real teams; an exhibition falls back to the seed.
   const rosters = game.rosters || makeRosters(game.rosterSeed || gameId);
+  const cpuIdentity = game.cpuIdentity || teamOffensiveIdentity(game.seasonSeed || gameId,
+    game.them || game.oppName || 'CPU');
 
   while (guard++ < 400) {
     const i = state.playIndex;
@@ -127,7 +132,7 @@ export function runToNextDecision(gameId, game, humanCall) {
         offId = humanTurn ? humanCall.callId : cpuOffensiveCall(state, tendencies.US, rngCpu);
         defId = cpuDefensiveCall(state, tendencies.US, rngCpu);
       } else {
-        offId = cpuOffensiveCall(state, tendencies.CPU, rngCpu, { runLean: 0.1 });
+        offId = cpuOffensiveCall(state, tendencies.CPU, rngCpu, cpuIdentity);
         defId = humanTurn ? humanCall.callId : cpuDefensiveCall(state, tendencies.CPU, rngCpu);
       }
       const off = OFF_BY_ID[offId], def = DEF_BY_ID[defId];

@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
-import { OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
+import { OFFENSE, OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
 import {
   createSeason,
+  dehydrate,
   finishedGameRecorded,
+  recordGameFilm,
   simRemainingWeek,
   startOffseason,
+  unlockFilmOverlay,
 } from '../public/shared/season.js';
 import { TEAMS } from '../public/shared/league.js';
 import { DEF_SPOTS } from '../public/shared/roster.js';
 import { depthChart } from '../public/shared/depth.js';
+import { FILM_OVERLAY_COST, filmRows, opponentDiagram } from '../public/shared/film.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -137,5 +141,47 @@ assert.deepEqual(functionPaths, [],
   'offseason state sent to Firestore must not contain functions');
 assert.equal(typeof offseason.awards.awards[0].winner.headline, 'string',
   'award headlines should be saved as display-ready strings');
+
+// League games accumulate compact situational call counts without teaching
+// CPU clubs a user's installed custom play.
+const savedCallIds = new Set();
+for (const team of Object.values(awardsSeason.filmBook)) {
+  for (const unit of ['offense', 'defense']) {
+    for (const calls of Object.values(team[unit] || {})) {
+      Object.keys(calls).forEach((id) => savedCallIds.add(id));
+    }
+  }
+}
+assert.equal(savedCallIds.has(customId), false,
+  'opponent tendency film should not include a user-installed custom call');
+assert.ok(awardsSeason.filmBank.DC > 0,
+  'completed staff games should accrue persistent film points');
+assert.ok(Buffer.byteLength(JSON.stringify(dehydrate(offseason))) < 900_000,
+  'a full season with league film must remain safely below Firestore document limits');
+
+const filmUs = TEAMS[0].id, filmThem = TEAMS[1].id;
+const detailedFilm = recordGameFilm(createSeason({ seed: 'detailed-film', userTeam: filmUs }), [{
+  playIndex: 1,
+  possession: 'CPU',
+  down: 3,
+  distance: 6,
+  offId: 'mesh',
+  defId: 'nick1',
+  outcome: { yards: 12 },
+}], { us: filmUs, them: filmThem }, { DC: 2 });
+const thirdMedium = filmRows(detailedFilm.lastGameFilm.book, filmThem, 'offense', '3-med');
+assert.equal(thirdMedium[0].callId, 'mesh');
+assert.equal(thirdMedium[0].ypp, 12,
+  'last-game film should preserve a call\'s actual effectiveness');
+const unlockedFilm = unlockFilmOverlay(detailedFilm, 'DC', filmThem, 'mesh');
+assert.equal(unlockedFilm.filmOverlays.DC.includes(`${filmThem}:mesh`), true);
+assert.equal(unlockedFilm.filmBank.DC,
+  detailedFilm.filmBank.DC - FILM_OVERLAY_COST,
+  'unlocking an opponent diagram should spend the configured film cost');
+
+for (const play of OFFENSE.filter((p) => !p.custom)) {
+  assert.ok(Object.keys(opponentDiagram(play.id)?.paths || {}).length,
+    `${play.name} should have an opponent-film diagram`);
+}
 
 console.log('Regression tests passed.');

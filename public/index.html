@@ -121,6 +121,7 @@
     </div>
     <div class="tabs season-tabs" role="tablist">
       <button class="tab is-on" data-stab="week" role="tab" aria-selected="true">This week</button>
+      <button class="tab" data-stab="film" role="tab" aria-selected="false">Film room</button>
       <button class="tab" data-stab="standings" role="tab" aria-selected="false">Standings</button>
       <button class="tab" data-stab="awards" role="tab" aria-selected="false">Awards</button>
       <button class="tab" data-stab="roster" role="tab" aria-selected="false">Roster</button>
@@ -148,6 +149,10 @@
         <label class="dz-check"><input type="checkbox" id="dz-pa"> Play action</label>
       </div>
       <p class="dz-hint" id="dz-hint">Pick a receiver, then click downfield to draw his route.</p>
+      <div id="dz-overlay-note" class="dz-overlay-note" hidden>
+        <span id="dz-overlay-label"></span>
+        <button id="dz-overlay-clear" class="btn btn-tiny">Remove overlay</button>
+      </div>
       <div id="dz-field"></div>
       <div class="dz-actions">
         <button id="dz-undo" class="btn btn-tiny">Undo point</button>
