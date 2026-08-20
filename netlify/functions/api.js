@@ -16,7 +16,8 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
   weekLabel } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
-import { registerSeasonCalls } from '../../public/shared/playbook.js';
+import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
+  seasonCallIds } from '../../public/shared/playbook.js';
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -66,6 +67,19 @@ const seasonRef = (id) => store().collection('seasons').doc(id);
 
 const seatsIn = (doc) => ['OC', 'DC'].filter((s) => doc.seats?.[s]);
 const MAX_SEASON_SLOTS = 5;
+const BUILT_IN_CALL_IDS = new Set([...Object.keys(OFF_BY_ID), ...Object.keys(DEF_BY_ID)]);
+const seasonCallCache = new Map();
+
+function cacheSeasonCalls(seasonId, season) {
+  const calls = {
+    customPlays: season.customPlays || [],
+    customDefenses: season.customDefenses || [],
+  };
+  const entry = { calls, ids: seasonCallIds(calls) };
+  seasonCallCache.set(seasonId, entry);
+  registerSeasonCalls(calls);
+  return entry;
+}
 
 async function activeSeasonsFor(uid) {
   const snap = await store().collection('seasons').where('uids', 'array-contains', uid).limit(25).get();
@@ -617,13 +631,23 @@ const actions = {
       if (g.status !== 'live') throw new ApiError(409, 'Game is not live.');
       if (g.state.playIndex !== playIndex) throw new ApiError(409, 'Someone already ran that snap.');
 
-      // Serverless instances do not share memory. A custom call may have been
-      // installed by a different (or now-cold) instance, so rebuild the saved
-      // playbook before resolving every season snap.
-      if (g.seasonId) {
+      // Built-ins need no extra read. On a cold instance, load a season only
+      // when its first custom id arrives; the season-scoped cache then covers
+      // every saved call until that serverless instance is recycled.
+      let cachedCalls = seasonCallCache.get(g.seasonId);
+      const needsCustomCalls = g.seasonId && callId && !BUILT_IN_CALL_IDS.has(callId)
+        && !cachedCalls?.ids.has(callId);
+      if (needsCustomCalls) {
         const seasonSnap = await tx.get(seasonRef(g.seasonId));
         if (!seasonSnap.exists) throw new ApiError(404, 'This game has no season.');
-        registerSeasonCalls(seasonSnap.data());
+        cachedCalls = cacheSeasonCalls(g.seasonId, seasonSnap.data());
+        if (!cachedCalls.ids.has(callId)) {
+          throw new ApiError(400, `Unknown custom call ${callId}.`);
+        }
+      } else if (cachedCalls && callId && !BUILT_IN_CALL_IDS.has(callId)) {
+        // The resolver registry is process-global. Restore this season's exact
+        // definitions in case another season used the same custom id.
+        registerSeasonCalls(cachedCalls.calls);
       }
 
       if (seat !== seatOnClock(g.state)) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
-import { OFF_BY_ID, registerSeasonCalls } from '../public/shared/playbook.js';
+import { OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -57,5 +57,12 @@ const customGame = {
 assert.doesNotThrow(() => runToNextDecision(
   'custom-cold-start', customGame, { callId: customId }),
 'registered season play should resolve without an unknown-call error');
+
+const ids = seasonCallIds({
+  customPlays: [{ id: customId }],
+  customDefenses: [{ id: 'cd-cold-start-regression' }],
+});
+assert.deepEqual([...ids], [customId, 'cd-cold-start-regression'],
+  'the server cache should remain scoped to calls saved in this season');
 
 console.log('Game-flow tests passed.');

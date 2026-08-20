@@ -192,6 +192,13 @@ export function registerSeasonCalls(season = {}) {
   registerCustomPlays(season.customPlays || []);
   registerCustomDefenses(season.customDefenses || []);
 }
+
+export function seasonCallIds(season = {}) {
+  return new Set([
+    ...(season.customPlays || []).map((p) => p?.id).filter(Boolean),
+    ...(season.customDefenses || []).map((d) => d?.id).filter(Boolean),
+  ]);
+}
 export const customDefenses = () => DEFENSE.filter((d) => d.custom);
 export const DEF_BY_ID = Object.fromEntries(DEFENSE.map((p) => [p.id, p]));
 
