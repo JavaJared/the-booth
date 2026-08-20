@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
 import { OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
-import { createSeason } from '../public/shared/season.js';
+import { createSeason, finishedGameRecorded } from '../public/shared/season.js';
 import { TEAMS } from '../public/shared/league.js';
 import { DEF_SPOTS } from '../public/shared/roster.js';
 import { depthChart } from '../public/shared/depth.js';
@@ -99,5 +99,13 @@ assert.equal(defensiveStats.find((p) => p.name === movedDt.name)?.tackles, 7,
   'DT statistics should survive a depth-chart slot change');
 assert.equal(defensiveStats.find((p) => p.name === movedCb.name)?.pbu, 3,
   'CB statistics should survive a depth-chart slot change');
+
+const finishedSeason = {
+  results: [{ final: true, gameDocId: 'game-doc-1' }],
+};
+assert.equal(finishedGameRecorded(finishedSeason, 'game-doc-1'), true,
+  'a matching repeated finish request should be idempotent');
+assert.equal(finishedGameRecorded(finishedSeason, 'game-doc-2'), false,
+  'a different game must not be mistaken for an already-finished one');
 
 console.log('Regression tests passed.');

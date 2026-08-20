@@ -79,6 +79,8 @@ export function dedupeResults(results) {
 }
 
 export const resultFor = (season, gameId) => season.results.find((r) => r.id === gameId);
+export const finishedGameRecorded = (season, gameDocId) => !!gameDocId
+  && season.results.some((r) => r.final && r.gameDocId === gameDocId);
 export const weekGames = (season, week) => season.schedule.games.filter((g) => g.week === week);
 
 /** The user's game this week, or null on a bye. */

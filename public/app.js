@@ -953,9 +953,9 @@ const link = {
     if (this.local) { app.season = advanceWeek(app.season); renderSeason(); return; }
     await api('advanceSeason', { seasonId: app.seasonId, ready: true });
   },
-  async finish() {
+  async finish(gameId) {
     if (this.local) return;
-    await api('finishWeek', { seasonId: app.seasonId });
+    await api('finishWeek', { seasonId: app.seasonId, gameId });
   },
   seats() { return this.local ? [app.seat] : ['OC', 'DC'].filter((s) => app.seasonDoc?.seats?.[s]); },
   async interview(teamId, choices) {
@@ -2565,7 +2565,7 @@ function renderFinal(g, plays) {
     if (!link.local) {
       // The server owns the season; it reads the play log itself.
       closeModal();
-      run(link.finish());
+      run(link.finish(g.id));
       return;
     }
     // Fold the result into the season in the same shape a simulated game

@@ -14,7 +14,7 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   setWeekReady, canAdvanceWeek, weekReadyBoth,
   openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
   startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
-  weekLabel } from '../../public/shared/season.js';
+  weekLabel, finishedGameRecorded } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
@@ -345,9 +345,19 @@ const actions = {
   },
 
   /** Fold a finished game into the season and clear the week. */
-  async finishWeek(uid, { seasonId }) {
+  async finishWeek(uid, { seasonId, gameId }) {
     const { doc, season } = await loadSeason(seasonId, uid);
-    if (!doc.currentGameId) throw new ApiError(409, 'No game to finish.');
+    // Both coordinators can leave the final screen at nearly the same time.
+    // The first request records the result and clears currentGameId; the
+    // matching retry is success, not an error toast on the season screen.
+    if (!doc.currentGameId) {
+      if (finishedGameRecorded(season, gameId)) return { ok: true, alreadyFinished: true };
+      throw new ApiError(409, 'No game to finish.');
+    }
+    if (gameId && gameId !== doc.currentGameId) {
+      if (finishedGameRecorded(season, gameId)) return { ok: true, alreadyFinished: true };
+      throw new ApiError(409, 'A different game is currently active.');
+    }
     const gSnap = await gameRef(doc.currentGameId).get();
     const game = gSnap.data();
     if (!game || game.status !== 'final') throw new ApiError(409, 'That game is not over.');
