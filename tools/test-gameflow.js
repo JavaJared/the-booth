@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
 import { OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
-import { createSeason, finishedGameRecorded } from '../public/shared/season.js';
+import {
+  createSeason,
+  finishedGameRecorded,
+  simRemainingWeek,
+  startOffseason,
+} from '../public/shared/season.js';
 import { TEAMS } from '../public/shared/league.js';
 import { DEF_SPOTS } from '../public/shared/roster.js';
 import { depthChart } from '../public/shared/depth.js';
@@ -107,5 +112,30 @@ assert.equal(finishedGameRecorded(finishedSeason, 'game-doc-1'), true,
   'a matching repeated finish request should be idempotent');
 assert.equal(finishedGameRecorded(finishedSeason, 'game-doc-2'), false,
   'a different game must not be mistaken for an already-finished one');
+
+// Black Monday persists the complete offseason state to Firestore. Award
+// summaries therefore need to be data, not formatter functions that the
+// Firestore encoder cannot serialize.
+let awardsSeason = createSeason({ seed: 'serializable-awards', userTeam: TEAMS[0].id });
+for (let week = 1; week <= 18; week += 1) {
+  awardsSeason = simRemainingWeek({ ...awardsSeason, week }, week);
+}
+const offseason = startOffseason({ ...awardsSeason, phase: 'done' });
+const functionPaths = [];
+const findFunctions = (value, path = 'season') => {
+  if (typeof value === 'function') {
+    functionPaths.push(path);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    findFunctions(child, `${path}.${key}`);
+  }
+};
+findFunctions(offseason);
+assert.deepEqual(functionPaths, [],
+  'offseason state sent to Firestore must not contain functions');
+assert.equal(typeof offseason.awards.awards[0].winner.headline, 'string',
+  'award headlines should be saved as display-ready strings');
 
 console.log('Regression tests passed.');

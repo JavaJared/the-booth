@@ -55,10 +55,11 @@ function leadersFor(teamId, roster, unit, seed) {
   const rate = (base, perG) => Math.max(0, perG) * games;
 
   const out = [];
-  const add = (p, side, stats, headline) => {
+  const add = (p, side, stats, formatHeadline) => {
     if (!p) return;
     out.push({ teamId, side, pos: p.pos, name: p.name, rating: p.rating,
-      age: p.age, rookie: p.draftedIn != null, stats, headline });
+      age: p.age, rookie: p.draftedIn != null, stats,
+      headline: formatHeadline(stats) });
   };
 
   // Rookies rarely lead a club, so the pool needs the best first year player
@@ -83,15 +84,15 @@ function leadersFor(teamId, roster, unit, seed) {
         : stats.rushYards ? (x) => `${x.rushYards} rushing, ${x.rushTD} TD`
         : (x) => `${x.recYards} receiving, ${x.recTD} TD`;
       out.push({ teamId, side, pos: r.pos, name: r.name, rating: r.rating,
-        age: r.age, rookie: true, stats, headline });
+        age: r.age, rookie: true, stats, headline: headline(stats) });
     } else {
       const stats = { tackles: Math.round(games * (4.2 * share + 0.9)),
         sacks: Math.round(games * (0.30 + stopsFor * 0.05) * share * 2) / 2,
         ints: Math.round(games * (0.15 + stopsFor * 0.03) * share) };
       out.push({ teamId, side, pos: r.pos, name: r.name, rating: r.rating,
         age: r.age, rookie: true, stats,
-        headline: (x) => [x.sacks ? `${x.sacks} sacks` : null, `${x.tackles} tackles`,
-          x.ints ? `${x.ints} INT` : null].filter(Boolean).join(', ') });
+        headline: [stats.sacks ? `${stats.sacks} sacks` : null, `${stats.tackles} tackles`,
+          stats.ints ? `${stats.ints} INT` : null].filter(Boolean).join(', ') });
     }
   };
 
@@ -214,7 +215,7 @@ export function seasonAwards(season) {
         : (s) => [s.sacks ? `${s.sacks} sacks` : null, `${s.tackles} tackles`,
             s.ints ? `${s.ints} INT` : null].filter(Boolean).join(', ');
       real.push({ teamId: us, side, pos: p.pos, name: p.name, rating: p.rating,
-        age: p.age, rookie: p.rookie, stats: stats2, headline });
+        age: p.age, rookie: p.rookie, stats: stats2, headline: headline(stats2) });
     }
   }
   pool = pool.filter((c) => c.teamId !== us).concat(real);

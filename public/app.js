@@ -1737,7 +1737,7 @@ function paneAwards(pane, S) {
       x.label,
       `${mine ? '<mark>' : ''}${w.pos} ${w.name}${mine ? '</mark>' : ''}`
         + `<em class="awteam">${TEAM_BY_ID[w.teamId].name}</em>`,
-      w.headline(w.stats),
+      w.headline,
     ];
   });
   pane.append(card(done ? `${A.year} honours` : 'Leading the vote',
