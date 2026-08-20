@@ -109,6 +109,8 @@ export function liveConfig(season, game) {
     atHome: game.home === us,
     teamName: TEAM_BY_ID[us].name,
     oppName: TEAM_BY_ID[them].name,
+    usRecord: record(season, us),
+    themRecord: record(season, them),
     rosters: { US: season.rosters[us], CPU: season.rosters[them] },
     firstPossession: mulberry32(hashSeed(`${season.seed}:${game.id}:toss`))() < 0.5 ? 'US' : 'CPU',
   };

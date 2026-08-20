@@ -61,6 +61,10 @@ h1,h2{margin:0}
 
 /* ---------- setup / lobby ---------- */
 #setup,#lobby{display:grid;place-items:center;padding:2.5rem 1.25rem}
+.home-shell{width:min(64rem,100%);display:grid;grid-template-columns:minmax(0,1.05fr) minmax(20rem,.95fr);
+  gap:clamp(2rem,6vw,5rem);align-items:center}
+.home-brand .wordmark{font-size:clamp(4rem,10vw,7.5rem);white-space:nowrap}
+.home-brand .lede{font-size:1.05rem;max-width:38ch}
 .setup-card{
   width:100%;max-width:27rem;background:var(--pad);padding:2rem 1.75rem 1.75rem;
   border:1px solid var(--hair);border-radius:2px;
@@ -71,6 +75,32 @@ h1,h2{margin:0}
 .setup-card::before{content:'';position:absolute;top:0;bottom:0;left:1.1rem;
   width:1px;background:var(--rule)}
 .setup-card>*{padding-left:.75rem}
+.setup-card h2{font-family:var(--cond);text-transform:uppercase;letter-spacing:.04em;
+  font-size:1.55rem;margin:0 0 1.25rem}
+.auth-actions{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.35rem}
+.auth-actions .btn{width:100%}
+.dashboard-card{max-width:34rem}
+.account-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+.account-head h2{margin-bottom:.1rem}
+.account-email{margin:0;color:var(--ink-3);font-size:.78rem;overflow-wrap:anywhere}
+.slot-heading{display:flex;align-items:center;justify-content:space-between;margin:1.35rem 0 .55rem;
+  font-family:var(--cond);text-transform:uppercase;letter-spacing:.1em}
+.slot-heading h3{font-size:.72rem;margin:0}.slot-heading span{font-size:.65rem;color:var(--ink-3)}
+.season-slots{display:grid;gap:.55rem;margin-bottom:.8rem}
+.legacy-migration{border:1px solid var(--pencil);background:var(--pencil-soft);
+  padding:.75rem;margin-bottom:.7rem}
+.legacy-migration h3{font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em;
+  font-size:.78rem;margin:0 0 .2rem;color:var(--pencil)}
+.legacy-migration p{font-size:.76rem;color:var(--ink-2);margin:.15rem 0 .6rem}
+.legacy-migration .slot-actions{display:flex;gap:.4rem;flex-wrap:wrap}
+.season-slot{border:1px solid var(--hair);padding:.65rem .7rem;display:grid;
+  grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:center;background:var(--paper)}
+.season-slot h3{margin:0;font-size:.92rem}.season-slot p{margin:.12rem 0 0;color:var(--ink-3);font-size:.72rem}
+.season-slot .slot-actions{display:flex;gap:.35rem;align-items:center}
+.season-slot-empty{padding:.8rem;border:1px dashed var(--hair);color:var(--ink-3);
+  font-family:var(--hand);font-size:1.05rem}
+.btn-wide{width:100%}.account-join{border-top:1px solid var(--hair);margin-top:1.2rem;padding-top:1rem}
+.account-join .eyebrow{margin-bottom:.25rem}
 .eyebrow{font-size:.7rem;color:var(--ink-3);margin:0 0 .9rem}
 .wordmark{font-family:var(--cond);font-weight:700;font-size:clamp(3rem,12vw,4.2rem);
   line-height:.85;letter-spacing:-.005em;text-transform:uppercase;margin:0 0 1.1rem}
@@ -82,10 +112,10 @@ h1,h2{margin:0}
 .lede{color:var(--ink-2);margin:0 0 1.6rem;max-width:34ch}
 .form-field{display:block;margin-bottom:1.1rem}
 .form-field span{display:block;font-size:.68rem;color:var(--ink-3);margin-bottom:.3rem}
-input[type=text]{width:100%;background:transparent;border:0;border-bottom:1px solid var(--ink-3);
+input[type=text],input[type=email],input[type=password]{width:100%;background:transparent;border:0;border-bottom:1px solid var(--ink-3);
   border-radius:0;padding:.4rem .1rem;font-family:var(--hand);font-size:1.25rem}
-input[type=text]::placeholder{font-family:var(--sans);font-size:.9rem;color:var(--ink-3)}
-input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bottom-width:2px}
+input::placeholder{font-family:var(--sans);font-size:.9rem;color:var(--ink-3)}
+input:focus{outline:none;border-bottom-color:var(--pencil);border-bottom-width:2px}
 .seat-pick{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:1.4rem}
 .seat-btn{background:var(--pad);border:1px solid var(--hair);border-radius:2px;
   padding:.7rem .8rem;cursor:pointer;text-align:left;position:relative}
@@ -123,9 +153,13 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
    against the edge of the screen. */
 .side{display:flex;align-items:center;gap:clamp(.4rem,1.4vw,.9rem);flex:1;min-width:0;
   justify-content:space-between}
+.team-id{display:flex;flex-direction:column;min-width:0}
+.side.away .team-id{align-items:flex-end}
 .tname{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
   font-weight:600;font-size:clamp(.72rem,2vw,1rem);color:var(--led-white);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.team-id small{font-family:var(--led-face);font-size:clamp(.55rem,1.5vw,.68rem);
+  color:var(--led-dim);letter-spacing:.08em;margin-top:.05rem}
 .tscore{font-family:var(--led-face);font-weight:700;font-size:clamp(2.1rem,7vw,3.4rem);
   line-height:.95;color:var(--led);font-variant-numeric:tabular-nums;
   text-shadow:0 0 18px rgba(246,168,33,.35)}
@@ -159,9 +193,11 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
 .board-situation .spot{font-family:var(--cond);text-transform:uppercase;
   letter-spacing:.13em;font-size:clamp(.66rem,1.8vw,.78rem);font-weight:600;
   color:var(--led-dim)}
-.board-situation .btn-tiny{position:absolute;right:clamp(.6rem,2vw,1.1rem);bottom:.5rem;
+.board-controls{position:absolute;right:clamp(.6rem,2vw,1.1rem);bottom:.5rem;
+  display:flex;align-items:center;gap:.75rem}
+.board-controls #btn-pause{position:static;
   background:transparent;border-color:var(--led-dim);color:var(--led-dim);box-shadow:none}
-.board-situation .btn-tiny:hover{transform:none;color:var(--led-white);
+.board-controls #btn-pause:hover{transform:none;color:var(--led-white);
   border-color:var(--led-white)}
 
 @media (max-width:560px){
@@ -170,7 +206,7 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--pencil);border-bot
   .cell{padding:.25rem .35rem .2rem}
   /* No room to float the button on a phone; put it back in the flow. */
   .board-situation{justify-content:space-between}
-  .board-situation .btn-tiny{position:static}
+  .board-controls{position:static;margin-left:auto}
 }
 
 /* ---------- the field ---------- */
@@ -601,7 +637,7 @@ table.scout s{color:var(--ink-3)}
   font-family:var(--cond);text-transform:uppercase;letter-spacing:.08em}
 
 /* timeouts and the two point decision */
-.timeouts{display:flex;align-items:center;gap:.3rem;margin-left:auto;margin-right:.6rem}
+.timeouts{display:flex;align-items:center;gap:.3rem}
 .to-label{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
   font-size:.58rem;font-weight:600;color:var(--led-dim);margin-right:.15rem}
 .timeouts i{width:.55rem;height:.55rem;border-radius:50%;background:rgba(255,255,255,.18);
@@ -611,3 +647,14 @@ table.scout s{color:var(--ink-3)}
   color:var(--led-dim);box-shadow:none}
 .to-use:hover{transform:none;color:var(--led-white);border-color:var(--led-white)}
 .conv-note{grid-column:1/-1;font-family:var(--hand);font-size:1.1rem;color:var(--pencil);margin:.5rem 0 0}
+
+@media (max-width:760px){
+  .home-shell{grid-template-columns:1fr;gap:1.5rem;max-width:34rem}
+  .home-brand{text-align:center}.home-brand .lede{margin-left:auto;margin-right:auto}
+  .home-brand .wordmark{font-size:clamp(3.6rem,17vw,5.5rem)}
+}
+@media (max-width:440px){
+  .auth-actions{grid-template-columns:1fr}
+  .season-slot{grid-template-columns:1fr}.season-slot .slot-actions{justify-content:flex-start}
+  .board-controls{width:100%;justify-content:flex-end;margin-left:0}
+}

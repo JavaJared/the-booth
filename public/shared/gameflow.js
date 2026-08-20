@@ -168,6 +168,11 @@ export function runToNextDecision(gameId, game, humanCall) {
     // Can another snap run without a human? Two cases qualify: the side with
     // the ball is choosing to kick, or the unit on the clock is AI-run.
     if (state.status === 'final') break;
+    // The opponent owns its conversion decision. Resolve it in this same
+    // server turn instead of returning a pending choice to our defensive
+    // coordinator. This must happen before the auto-seat check: in a solo
+    // season the DC can be human even though the CPU offense is not.
+    if (state.pendingConversion?.team === 'CPU') continue;
     const offenseIsOurs = state.possession === 'US';
     const offenseIsAuto = offenseIsOurs ? autoSeat === 'OC' : true;
     if (state.down === 4 && offenseIsAuto) {

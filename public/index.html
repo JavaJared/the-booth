@@ -13,36 +13,78 @@
 
 <!-- ============ SETUP ============ -->
 <section id="setup" class="screen">
-  <div class="setup-card">
-    <p class="eyebrow">Two coordinators. One headset. One way out.</p>
-    <h1 class="wordmark">THE<br><em>BOOTH</em></h1>
-    <p class="lede">You and your rival run the same team's offense and defense.
-      Only one of you gets the head coaching call.</p>
+  <div class="home-shell">
+    <header class="home-brand">
+      <p class="eyebrow">Two coordinators. One headset. One way out.</p>
+      <h1 class="wordmark">THE <em>BOOTH</em></h1>
+      <p class="lede">Build a career one call at a time. Your account keeps every
+        season ready on any device.</p>
+    </header>
 
-    <label class="form-field">
-      <span>Your name</span>
-      <input id="name" type="text" placeholder="Coordinator" autocomplete="off">
-    </label>
-
-    <div class="seat-pick" role="radiogroup" aria-label="Choose a seat">
-      <button class="seat-btn is-on" data-seat="OC" role="radio" aria-checked="true">
-        <b>Offensive</b><span>coordinator</span></button>
-      <button class="seat-btn" data-seat="DC" role="radio" aria-checked="false">
-        <b>Defensive</b><span>coordinator</span></button>
-    </div>
-
-    <div class="setup-actions">
-      <button id="btn-season" class="btn btn-primary">Start a season</button>
-      <button id="btn-create" class="btn">Exhibition game with a friend</button>
-      <div class="join-row">
-        <input id="join-code" type="text" placeholder="Game or season code" autocomplete="off" spellcheck="false">
-        <button id="btn-join" class="btn">Join</button>
+    <div id="auth-view" class="setup-card auth-card">
+      <p class="eyebrow">Coach login</p>
+      <h2>Get back in the booth</h2>
+      <label class="form-field">
+        <span>Email</span>
+        <input id="auth-email" type="email" placeholder="coach@example.com" autocomplete="email">
+      </label>
+      <label class="form-field">
+        <span>Password</span>
+        <input id="auth-password" type="password" placeholder="At least 6 characters" autocomplete="current-password">
+      </label>
+      <div class="auth-actions">
+        <button id="btn-login" class="btn btn-primary">Log in</button>
+        <button id="btn-signup" class="btn">Create account</button>
       </div>
+      <button id="btn-guest" class="btn btn-ghost">Play an exhibition without an account</button>
+      <p id="auth-err" class="err" role="alert"></p>
     </div>
 
-    <button id="btn-local" class="btn btn-ghost">Single exhibition game, both seats here</button>
-    <button id="btn-designer-solo" class="btn btn-ghost">Draw up a play</button>
-    <p id="setup-err" class="err" role="alert"></p>
+    <div id="account-view" class="setup-card dashboard-card" hidden>
+      <div class="account-head">
+        <div><p class="eyebrow">Your coaching office</p><h2 id="account-name">Welcome back</h2>
+          <p id="account-email" class="account-email"></p></div>
+        <button id="btn-logout" class="btn btn-tiny">Log out</button>
+      </div>
+      <div class="slot-heading"><h3>Season saves</h3><span id="slot-count">0 / 5</span></div>
+      <div id="legacy-migration" class="legacy-migration" hidden></div>
+      <div id="season-slots" class="season-slots"></div>
+      <button id="btn-season" class="btn btn-primary btn-wide">Start New Season</button>
+      <div class="account-join">
+        <p class="eyebrow">Have an invitation?</p>
+        <div class="join-row">
+          <input id="join-code" type="text" placeholder="Game or season code" autocomplete="off" spellcheck="false">
+          <button id="btn-join" class="btn">Join</button>
+        </div>
+      </div>
+      <button id="btn-account-exhibition" class="btn btn-ghost">Exhibition and play designer</button>
+      <p id="setup-err" class="err" role="alert"></p>
+    </div>
+
+    <div id="guest-view" class="setup-card" hidden>
+      <div class="account-head"><p class="eyebrow">Exhibition mode</p>
+        <button id="btn-back-login" class="btn btn-tiny">Back to login</button></div>
+      <label class="form-field">
+        <span>Your name</span>
+        <input id="name" type="text" placeholder="Coordinator" autocomplete="off">
+      </label>
+      <div class="seat-pick" role="radiogroup" aria-label="Choose a seat">
+        <button class="seat-btn is-on" data-seat="OC" role="radio" aria-checked="true">
+          <b>Offensive</b><span>coordinator</span></button>
+        <button class="seat-btn" data-seat="DC" role="radio" aria-checked="false">
+          <b>Defensive</b><span>coordinator</span></button>
+      </div>
+      <div class="setup-actions">
+        <button id="btn-create" class="btn">Exhibition game with a friend</button>
+        <div class="join-row">
+          <input id="guest-join-code" type="text" placeholder="Exhibition code" autocomplete="off" spellcheck="false">
+          <button id="btn-guest-join" class="btn">Join</button>
+        </div>
+      </div>
+      <button id="btn-local" class="btn btn-ghost">Single exhibition game, both seats here</button>
+      <button id="btn-designer-solo" class="btn btn-ghost">Draw up a play</button>
+      <p id="guest-err" class="err" role="alert"></p>
+    </div>
   </div>
 </section>
 
@@ -73,6 +115,7 @@
         <b id="week-label">Week 1</b>
         <span id="season-year">2026</span>
       </div>
+      <button id="btn-home" class="btn btn-tiny">Home</button>
       <button id="btn-designer" class="btn btn-tiny">Play designer</button>
       <div class="seat-badge" id="my-seat">Offense</div>
     </div>
@@ -126,7 +169,7 @@
     <div class="board-main">
       <div class="side">
         <i class="poss" id="poss-us" hidden></i>
-        <span class="tname" id="us-name">CASCADE</span>
+        <div class="team-id"><span class="tname" id="us-name">CASCADE</span><small id="us-record" hidden></small></div>
         <b class="tscore" id="us-score">0</b>
       </div>
 
@@ -138,7 +181,7 @@
 
       <div class="side away">
         <b class="tscore" id="them-score">0</b>
-        <span class="tname" id="them-name">IRONWORKS</span>
+        <div class="team-id"><span class="tname" id="them-name">IRONWORKS</span><small id="them-record" hidden></small></div>
         <i class="poss" id="poss-them" hidden></i>
       </div>
     </div>
@@ -146,7 +189,10 @@
     <div class="board-situation">
       <span class="dnd" id="dnd">1st &amp; 10</span>
       <span class="spot" id="spot">own 25</span>
-      <button id="btn-pause" class="btn btn-tiny">Pause</button>
+      <div class="board-controls">
+        <div id="timeouts" class="timeouts"></div>
+        <button id="btn-pause" class="btn btn-tiny">Pause</button>
+      </div>
     </div>
   </div>
 

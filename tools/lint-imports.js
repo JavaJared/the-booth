@@ -12,6 +12,7 @@ const FILES = [
   'netlify/functions/api.js',
   ...readdirSync(join(ROOT, 'public/shared')).map((f) => `public/shared/${f}`),
   'tools/balance.js',
+  'tools/test-gameflow.js',
 ];
 
 /** Every name a module exports. */

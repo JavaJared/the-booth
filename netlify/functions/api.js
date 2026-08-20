@@ -13,7 +13,8 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   setOffseasonReady, advanceOffseason, canReady, bothReady,
   setWeekReady, canAdvanceWeek, weekReadyBoth,
   openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
-  startDraft, advocate, runPicks, isOurPick } from '../../public/shared/season.js';
+  startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
+  weekLabel } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 
 class ApiError extends Error {
@@ -63,6 +64,12 @@ const gameRef = (id) => store().collection('games').doc(id);
 const seasonRef = (id) => store().collection('seasons').doc(id);
 
 const seatsIn = (doc) => ['OC', 'DC'].filter((s) => doc.seats?.[s]);
+const MAX_SEASON_SLOTS = 5;
+
+async function activeSeasonsFor(uid) {
+  const snap = await store().collection('seasons').where('uids', 'array-contains', uid).limit(25).get();
+  return snap.docs.filter((d) => !(d.data().archivedUids || []).includes(uid));
+}
 
 // True ratings live here and are never readable by a client. The class is
 // generated from a secret seed for the same reason: the season seed is public,
@@ -122,9 +129,105 @@ const actions = {
 
   /* ------------------------------------------------------------ seasons */
 
-  async createSeason(uid, { seat = 'OC', displayName = 'Coordinator', teamId }) {
+  async listMySeasons(uid) {
+    const docs = await activeSeasonsFor(uid);
+    const seasons = docs.map((snap) => {
+      const d = snap.data();
+      const seat = d.seats?.OC?.uid === uid ? 'OC' : 'DC';
+      const rec = seasonRecord(d, d.userTeam);
+      return {
+        id: snap.id,
+        slotName: d.slotName || `${TEAM_BY_ID[d.userTeam]?.name || 'Team'} career`,
+        teamId: d.userTeam,
+        teamName: TEAM_BY_ID[d.userTeam]
+          ? `${TEAM_BY_ID[d.userTeam].city} ${TEAM_BY_ID[d.userTeam].name}` : 'Unknown club',
+        seat,
+        year: d.year,
+        week: d.week,
+        weekLabel: weekLabel(d.week),
+        phase: d.phase,
+        record: rec,
+        currentGameId: d.currentGameId || null,
+        legacyImportId: d.legacyImportId || null,
+        createdAt: d.createdAt?.toMillis?.() || 0,
+      };
+    }).sort((a, b) => b.createdAt - a.createdAt);
+    return { seasons, maxSlots: MAX_SEASON_SLOTS };
+  },
+
+  async archiveSeason(uid, { seasonId }) {
+    const { doc } = await loadSeason(seasonId, uid);
+    if (doc.currentGameId) throw new ApiError(409, 'Finish the current game before retiring this save.');
+    await seasonRef(seasonId).update({ archivedUids: FieldValue.arrayUnion(uid) });
+    return { ok: true };
+  },
+
+  async importLocalSeason(uid, {
+    season: saved, seat = 'OC', displayName = 'Coordinator', slotName = '', migrationId = '',
+  }) {
+    if (!['OC', 'DC'].includes(seat)) bad('The local save has an invalid coordinator seat.');
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) bad('No local season was supplied.');
+    if (!TEAM_BY_ID[saved.userTeam]) bad('The local save has an unknown club.');
+    if (typeof saved.seed !== 'string' || !saved.seed) bad('The local save is missing its season seed.');
+    if (!Array.isArray(saved.results)) bad('The local save has invalid results.');
+    if (Buffer.byteLength(JSON.stringify(saved), 'utf8') > 850_000) {
+      throw new ApiError(413, 'That local save is too large to import safely.');
+    }
+    const importId = String(migrationId || '').trim().slice(0, 80);
+    if (!importId) bad('The migration is missing its device identifier.');
+
+    // Network retries are safe: the device identifier maps one legacy save to
+    // one Firestore document instead of consuming another slot.
+    const active = await activeSeasonsFor(uid);
+    const existing = active.find((snap) => snap.data().legacyImportId === importId);
+    if (existing) {
+      const d = existing.data();
+      return { seasonId: existing.id, seat: d.seats?.OC?.uid === uid ? 'OC' : 'DC', alreadyImported: true };
+    }
+    if (active.length >= MAX_SEASON_SLOTS) {
+      throw new ApiError(409, `All ${MAX_SEASON_SLOTS} season save slots are full.`);
+    }
+
+    // Never trust ownership or server metadata from localStorage. The season
+    // simulation state is retained, while identity and timestamps are rebuilt.
+    const clean = JSON.parse(JSON.stringify(saved));
+    for (const key of ['id', 'seats', 'uids', 'vote', 'currentGameId', 'createdAt',
+      'archivedUids', 'slotName', 'legacyImportId', 'importedAt', 'boardOC', 'boardDC']) {
+      delete clean[key];
+    }
+    const hydrated = hydrate(clean);
+    const { board, draftSeed, ...publicSeason } = hydrated;
+    const ref = seasonRef(store().collection('seasons').doc().id);
+    const seatDoc = { uid, displayName: String(displayName || 'Coordinator').slice(0, 60) };
+    const batch = store().batch();
+    batch.set(ref, {
+      ...dehydrate(publicSeason),
+      ...(Array.isArray(board) ? boardViews(board, [seat]) : {}),
+      id: ref.id,
+      createdAt: FieldValue.serverTimestamp(),
+      importedAt: FieldValue.serverTimestamp(),
+      legacyImportId: importId,
+      slotName: String(slotName || '').trim().slice(0, 40)
+        || `${TEAM_BY_ID[clean.userTeam].name} career (imported)`,
+      archivedUids: [],
+      seats: { [seat]: seatDoc },
+      uids: [uid],
+      vote: { OC: null, DC: null },
+      currentGameId: null,
+    });
+    if (Array.isArray(board)) {
+      batch.set(privateRef(ref.id), { board, draftSeed: draftSeed || null });
+    }
+    await batch.commit();
+    return { seasonId: ref.id, seat, alreadyImported: false };
+  },
+
+  async createSeason(uid, { seat = 'OC', displayName = 'Coordinator', teamId, slotName = '' }) {
     if (!['OC', 'DC'].includes(seat)) bad('Pick OC or DC.');
     if (!TEAM_BY_ID[teamId]) bad('Unknown club.');
+    if ((await activeSeasonsFor(uid)).length >= MAX_SEASON_SLOTS) {
+      throw new ApiError(409, `All ${MAX_SEASON_SLOTS} season save slots are full.`);
+    }
     const seed = Math.random().toString(36).slice(2, 10);
     const base = dehydrate(createSeason({ seed, userTeam: teamId }));
     const ref = seasonRef(store().collection('seasons').doc().id);
@@ -132,6 +235,9 @@ const actions = {
       ...base,
       id: ref.id,
       createdAt: FieldValue.serverTimestamp(),
+      slotName: String(slotName || '').trim().slice(0, 40)
+        || `${TEAM_BY_ID[teamId].name} career`,
+      archivedUids: [],
       seats: { [seat]: { uid, displayName } },
       uids: [uid],
       vote: { OC: null, DC: null },
@@ -141,6 +247,13 @@ const actions = {
   },
 
   async joinSeason(uid, { seasonId, displayName = 'Coordinator' }) {
+    const current = await seasonRef(seasonId).get();
+    if (!current.exists) throw new ApiError(404, 'No season with that code.');
+    const currentData = current.data();
+    const alreadyIn = currentData.seats?.OC?.uid === uid || currentData.seats?.DC?.uid === uid;
+    if (!alreadyIn && (await activeSeasonsFor(uid)).length >= MAX_SEASON_SLOTS) {
+      throw new ApiError(409, `All ${MAX_SEASON_SLOTS} season save slots are full.`);
+    }
     return store().runTransaction(async (tx) => {
       const ref = seasonRef(seasonId);
       const snap = await tx.get(ref);
@@ -184,6 +297,7 @@ const actions = {
           status: 'lobby',
           seasonId, seasonWeek: season.week,
           teamName: cfg.teamName, oppName: cfg.oppName,
+          usRecord: cfg.usRecord, themRecord: cfg.themRecord,
           rosters: cfg.rosters,
           atHome: cfg.atHome, us: cfg.us, them: cfg.them,
           seats: {
@@ -475,7 +589,11 @@ const actions = {
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
       if (!seat) throw new ApiError(403, 'Not your game.');
-      const both = (seat === 'OC' ? ready : g.seats.OC?.ready) && (seat === 'DC' ? ready : g.seats.DC?.ready);
+      // A solo season deliberately has one empty seat; that unit belongs to
+      // the AI and must not keep the human stuck in the lobby.
+      const ocReady = g.seats.OC ? (seat === 'OC' ? ready : g.seats.OC.ready) : true;
+      const dcReady = g.seats.DC ? (seat === 'DC' ? ready : g.seats.DC.ready) : true;
+      const both = ocReady && dcReady;
       const patch = { [`seats.${seat}.ready`]: ready };
       if (both && (g.status === 'lobby' || g.status === 'paused')) {
         patch.status = 'live';
@@ -499,8 +617,11 @@ const actions = {
       if (g.state.playIndex !== playIndex) throw new ApiError(409, 'Someone already ran that snap.');
 
       if (seat !== seatOnClock(g.state)) {
+        const settlingCpuConversion = auto && g.state.pendingConversion?.team === 'CPU';
+        const runningAutoSeat = auto && g.autoSeat === seatOnClock(g.state);
         // The idle coordinator may only force a call once the play clock expires.
-        if (!auto || !g.pending?.deadline || Date.now() < g.pending.deadline) {
+        if (!settlingCpuConversion && !runningAutoSeat
+          && (!auto || !g.pending?.deadline || Date.now() < g.pending.deadline)) {
           throw new ApiError(409, 'Not your call.');
         }
       }

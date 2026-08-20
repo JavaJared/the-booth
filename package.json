@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "balance": "node tools/balance.js 500",
-    "lint": "node tools/lint-imports.js"
+    "lint": "node tools/lint-imports.js",
+    "test": "node tools/test-gameflow.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0"

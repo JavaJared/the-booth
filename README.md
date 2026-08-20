@@ -1,8 +1,20 @@
-# The Booth — Slice 1
+# The Booth
 
-Two coordinators, one team, one head-coaching job. This slice is the core loop only:
-a single exhibition game, both coordinators calling live against a CPU opponent.
-No season, no carousel, no play designer — those are Slices 2–5.
+Two coordinators, one team, one head-coaching job. The Booth is a browser-based
+football management game with live play calling, full seasons, playoffs, roster
+management, a coaching carousel, scouting, a draft, and a play designer.
+
+Email/password accounts keep up to five active season saves in Firestore, so a
+career can resume on another device. Exhibition games can still be played
+without an account.
+
+### Importing a browser-only season
+
+After signing in on the browser that contains an older `booth:season` local
+save, the coaching office shows **Import Existing Season**. The import creates
+and verifies a Firestore save slot before offering to remove the original local
+copy. Keep that device copy until the dashboard confirms the import. Starting
+or resuming an account season no longer overwrites the legacy key.
 
 ## Play it right now, no setup
 
@@ -11,7 +23,8 @@ cd the-booth
 npx serve public        # or: python3 -m http.server -d public 8000
 ```
 
-Open the page, click **Play both seats on this device**. Everything runs in the
+Open the page, choose **Play an exhibition without an account**, then click
+**Single exhibition game, both seats here**. Everything runs in the
 browser against the real engine — no Firebase, no accounts. Use **View: offense /
 defense** in the call panel header to see the idle-coordinator side.
 
@@ -25,8 +38,8 @@ You never need npm on your own machine — Netlify installs everything on theirs
 ### Just the single-device version (5 minutes, no accounts)
 
 Push the repo, then in Netlify: **Add new site → Import from Git**, pick the repo,
-and accept the settings from `netlify.toml` (build `node tools/sync.js`, publish
-`public`). That's it. The site works immediately in "both seats on this device"
+and accept the settings from `netlify.toml` (no build command; publish
+`public`). That's it. The site works immediately in single-device exhibition
 mode. Skip everything below until you want real two-player.
 
 ### Two-player
@@ -36,7 +49,8 @@ requires a CLI — the Firebase console does all of it in the browser.
 
 1. **Firebase console** → create a project → **Build → Firestore Database →
    Create database** (production mode).
-2. **Build → Authentication → Sign-in method → Anonymous → Enable.**
+2. **Build → Authentication → Sign-in method** → enable both **Email/Password**
+   (for cross-device accounts) and **Anonymous** (for guest exhibitions).
 3. **Firestore → Rules** tab: paste the contents of `firestore.rules`, Publish.
 4. **Project settings → General → Your apps → Web (`</>`)** → register an app →
    copy the config object. Create `public/firebase-config.js` from
@@ -71,27 +85,17 @@ First request after idle has a cold start of roughly a second. If that gets
 annoying mid-drive, Netlify's background-function warming or a paid plan fixes
 it — but at 45 seconds per snap you probably won't notice.
 
-### If the first deploy 404s on shared/
-
-`public/shared/` is generated at build time by `tools/sync.js`, so it is not in
-the repo. If Netlify's build log shows the command didn't run, either set the
-build command manually in **Site configuration → Build & deploy** to
-`node tools/sync.js`, or delete `public/shared/` from `.gitignore` and commit the
-three files from `shared/` into `public/shared/` by hand through GitHub's web
-editor. Both work; the build command just keeps them from drifting.
-
 ## How it's put together
 
 ```
-shared/           canonical logic — the only copy you edit
+public/shared/    shared browser/server simulation and season logic
   playbook.js     21 offensive concepts, 20 defensive calls, all matchup data
   engine.js       pure deterministic sim: edges, resolution, clock, CPU brains
   gameflow.js     the turn loop
 netlify/functions/api.js   the server: thin wrappers around gameflow
 functions/        the same server as Firebase Cloud Functions, if you ever
                   move off Netlify — ignore it otherwise
-public/           client; identical UI over a Firebase or in-memory transport
-tools/sync.js     mirrors shared/ into public/ and functions/ (runs on deploy)
+public/           client; identical game UI over a Firebase or in-memory transport
 tools/balance.js  simulates N games and checks the output against real football
 ```
 
@@ -164,9 +168,3 @@ call, so the optimal human strategy was to spam it. Deep-ball completion is now
 ~38% with a real sack and interception cost, and two-high shells punish it hard.
 The best call is now within ~30% of the tenth-best, which is where you want it:
 the edge comes from matching the coverage, not from finding the magic play.
-
-## Next
-
-Slice 2 is the season: 17 games, standings, playoffs, and per-unit stat tracking
-that becomes the résumé. The final screen already computes the four numbers that
-will anchor it.

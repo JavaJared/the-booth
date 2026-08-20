@@ -2,7 +2,7 @@ import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
 import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
-import { createSeason, advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
+import { advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
@@ -24,6 +24,9 @@ const API_URL = '/api';   // Netlify function; see netlify.toml
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
 const abbr = (s) => s.slice(0, 3).toUpperCase();
+const escapeHtml = (s) => String(s).replace(/[&<>'"]/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
+}[c]));
 
 /**
  * An arrowhead, plus the point the line should stop at. Drawing the line all
@@ -52,10 +55,11 @@ class LocalTransport {
   emit() { this.listeners.forEach((f) => f(this.game, this.plays)); }
   subscribe(f) { this.listeners.push(f); if (this.game) f(this.game, this.plays); }
 
-  async create({ name, seat, teamName = 'Cascade', oppName = 'Ironworks', rosters, firstPossession, autoSeat }) {
+  async create({ name, seat, teamName = 'Cascade', oppName = 'Ironworks',
+    usRecord, themRecord, rosters, firstPossession, autoSeat }) {
     this.gameId = 'local-' + Math.random().toString(36).slice(2, 8);
     this.game = {
-      id: this.gameId, status: 'live', teamName, oppName,
+      id: this.gameId, status: 'live', teamName, oppName, usRecord, themRecord,
       rosterSeed: Math.random().toString(36).slice(2, 12),
       rosters,
       autoSeat: autoSeat || null,
@@ -120,9 +124,9 @@ class FirebaseTransport {
   async create(opts) { const r = await this.fn('createGame')(opts); this.mySeat = r.data.seat; this.watch(r.data.gameId); return r.data; }
   async join(gameId, displayName) { const r = await this.fn('joinGame')({ gameId, displayName }); this.mySeat = r.data.seat; this.watch(gameId); return r.data; }
   async ready(ready) { return this.fn('setReady')({ gameId: this.gameId, ready }); }
-  async call({ callId, special, conversion, timeout }) {
+  async call({ callId, special, auto, conversion, timeout }) {
     return this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex,
-      callId, special, conversion, timeout });
+      callId, special, auto, conversion, timeout });
   }
   async predict(guess) { return this.fn('submitPrediction')({ gameId: this.gameId, playIndex: this.game.state.playIndex, guess }); }
   async plan(_seat, plan) { return this.fn('setGameplan')({ gameId: this.gameId, plan }); }
@@ -155,7 +159,8 @@ const CHIRPS = ['Nice call.', 'That is on you.', 'Get me the ball back.', 'Take 
 /* ============================================================ app */
 
 const app = {
-  t: null, seat: 'OC', name: '', viewSeat: null, picked: null, busy: false, tick: null,
+  t: null, seat: 'OC', name: '', user: null, seasonUnsub: null,
+  viewSeat: null, picked: null, busy: false, tick: null,
 };
 
 /* ---------- setup ---------- */
@@ -165,7 +170,9 @@ document.querySelectorAll('.seat-btn').forEach((b) => b.addEventListener('click'
   app.seat = b.dataset.seat;
 }));
 
-const setupErr = (m) => { $('setup-err').textContent = m || ''; };
+const setupErr = (m) => { if ($('setup-err')) $('setup-err').textContent = m || ''; };
+const guestErr = (m) => { $('guest-err').textContent = m || ''; };
+const authErr = (m) => { $('auth-err').textContent = m || ''; };
 const nameVal = () => ($('name').value.trim() || 'Coordinator');
 
 $('btn-local').addEventListener('click', async () => {
@@ -180,7 +187,7 @@ $('btn-create').addEventListener('click', async () => {
   setupErr('');
   try {
     const fb = await connectFirebase();
-    app.name = nameVal();
+    app.name = app.user?.displayName || app.user?.email?.split('@')[0] || nameVal();
     app.t = new FirebaseTransport(fb);
     const made = await app.t.create({ seat: app.seat, displayName: app.name });
     rememberGame(made.gameId, app.name);
@@ -195,7 +202,7 @@ $('btn-join').addEventListener('click', async () => {
   if (!code) return setupErr('Enter the game code your rival sent you.');
   try {
     const fb = await connectFirebase();
-    app.name = nameVal();
+    app.name = app.user?.displayName || app.user?.email?.split('@')[0] || nameVal();
     // One box for both kinds of invitation — try a season, fall back to a game.
     try {
       const r = await fb.fn('joinSeason')({ seasonId: code, displayName: app.name });
@@ -213,9 +220,26 @@ $('btn-join').addEventListener('click', async () => {
   } catch (e) { setupErr(e.message.replace(/^.*?: /, '')); }
 });
 
+$('btn-guest-join').addEventListener('click', async () => {
+  guestErr('');
+  const code = $('guest-join-code').value.trim();
+  if (!code) return guestErr('Enter the exhibition code your rival sent you.');
+  try {
+    const fb = await connectFirebase({ anonymous: true });
+    app.name = nameVal();
+    app.t = new FirebaseTransport(fb);
+    await app.t.join(code, app.name);
+    rememberGame(code, app.name);
+    app.t.subscribe(render);
+    show('lobby');
+  } catch (e) { guestErr(e.message.replace(/^.*?: /, '')); }
+});
+
 $('btn-ready').addEventListener('click', () => app.t.ready(true));
 
-async function connectFirebase() {
+let _firebaseClient = null;
+async function firebaseClient() {
+  if (_firebaseClient) return _firebaseClient;
   let cfg;
   try { cfg = (await import('./firebase-config.js')).firebaseConfig; }
   catch { throw new Error('Add your keys to firebase-config.js, or use both seats on this device.'); }
@@ -227,7 +251,15 @@ async function connectFirebase() {
   ]);
   const fbApp = initializeApp(cfg);
   const a = auth.getAuth(fbApp);
-  await auth.signInAnonymously(a);
+
+  _firebaseClient = { fbApp, a, auth, fs };
+  return _firebaseClient;
+}
+
+async function connectFirebase({ anonymous = false } = {}) {
+  const { fbApp, a, auth, fs } = await firebaseClient();
+  if (!a.currentUser && anonymous) await auth.signInAnonymously(a);
+  if (!a.currentUser) throw new Error('Log in to continue.');
 
   // Reads come straight from Firestore (realtime, and the rules make them
   // read-only). Every write goes through the serverless API, which is the only
@@ -245,12 +277,228 @@ async function connectFirebase() {
   };
 
   return {
+    auth: a, authApi: auth, user: a.currentUser,
     db: fs.getFirestore(fbApp),
     onSnapshot: fs.onSnapshot, doc: fs.doc, collection: fs.collection,
     query: fs.query, orderBy: fs.orderBy,
     fn: (name) => (data) => call(name, data),
   };
 }
+
+function homeView(which) {
+  $('auth-view').hidden = which !== 'auth';
+  $('account-view').hidden = which !== 'account';
+  $('guest-view').hidden = which !== 'guest';
+}
+
+const authMessage = (e) => ({
+  'auth/invalid-credential': 'That email or password is not correct.',
+  'auth/email-already-in-use': 'An account already uses that email.',
+  'auth/weak-password': 'Use a password with at least 6 characters.',
+  'auth/invalid-email': 'Enter a valid email address.',
+  'auth/too-many-requests': 'Too many attempts. Wait a moment and try again.',
+}[e.code] || e.message || 'Sign-in failed.');
+
+async function refreshSeasonSlots() {
+  const host = $('season-slots');
+  host.innerHTML = '<div class="season-slot-empty">Loading your seasons…</div>';
+  try {
+    const { seasons, maxSlots = 5 } = await api('listMySeasons', {});
+    host.innerHTML = '';
+    $('slot-count').textContent = `${seasons.length} / ${maxSlots}`;
+    $('btn-season').disabled = seasons.length >= maxSlots;
+    $('btn-season').textContent = seasons.length ? 'Start New Season' : 'Start a New Season';
+    renderLegacyMigration(seasons, maxSlots);
+    if (!seasons.length) {
+      host.append(el('div', 'season-slot-empty', 'No active season yet. Your first headset is waiting.'));
+      return;
+    }
+    seasons.forEach((slot) => {
+      const box = el('article', 'season-slot');
+      const copy = el('div');
+      const title = el('h3');
+      title.textContent = slot.slotName;
+      const rec = slot.record || { w: 0, l: 0, t: 0 };
+      const meta = el('p');
+      meta.textContent = `${slot.teamName} · ${slot.seat} · ${slot.weekLabel} · `
+        + `${rec.w}-${rec.l}${rec.t ? `-${rec.t}` : ''}`;
+      copy.append(title, meta);
+      const actions = el('div', 'slot-actions');
+      const resumeBtn = el('button', 'btn btn-primary btn-tiny', 'Resume Season');
+      resumeBtn.addEventListener('click', () => resumeAccountSeason(slot.id));
+      const retireBtn = el('button', 'btn btn-tiny', 'Retire');
+      retireBtn.addEventListener('click', () => retireSeasonSlot(slot));
+      actions.append(resumeBtn, retireBtn);
+      box.append(copy, actions);
+      host.append(box);
+    });
+  } catch (e) {
+    host.innerHTML = '';
+    const msg = el('div', 'season-slot-empty');
+    msg.textContent = e.message;
+    host.append(msg);
+  }
+}
+
+function renderLegacyMigration(seasons, maxSlots) {
+  const host = $('legacy-migration');
+  const saved = loadSeason();
+  if (!saved?.season) { host.hidden = true; host.innerHTML = ''; return; }
+
+  host.hidden = false;
+  host.innerHTML = '';
+  const imported = saved.migrationId
+    ? seasons.find((slot) => slot.legacyImportId === saved.migrationId) : null;
+  const title = el('h3');
+  const copy = el('p');
+  const actions = el('div', 'slot-actions');
+
+  if (imported) {
+    title.textContent = 'Device save imported';
+    copy.textContent = `${imported.slotName} is safely stored in your account. `
+      + 'The original device copy is still available as a backup.';
+    const resume = el('button', 'btn btn-primary btn-tiny', 'Resume Imported Season');
+    resume.addEventListener('click', () => resumeAccountSeason(imported.id));
+    const remove = el('button', 'btn btn-tiny', 'Remove Device Backup');
+    remove.addEventListener('click', removeLegacyBackup);
+    actions.append(resume, remove);
+  } else {
+    const team = TEAM_BY_ID[saved.season.userTeam];
+    title.textContent = 'Season found on this device';
+    copy.textContent = `${team ? `${team.city} ${team.name}` : 'Legacy season'} · `
+      + `${weekLabel(saved.season.week || 1)}. Import it to use this save on any device.`;
+    const migrate = el('button', 'btn btn-primary btn-tiny', 'Import Existing Season');
+    migrate.disabled = seasons.length >= maxSlots;
+    migrate.addEventListener('click', () => importLegacySeason(saved));
+    actions.append(migrate);
+    if (migrate.disabled) {
+      actions.append(el('span', 'account-email', 'Retire a slot before importing.'));
+    }
+  }
+  host.append(title, copy, actions);
+}
+
+async function importLegacySeason(saved) {
+  setupErr('');
+  try {
+    if (!saved.migrationId) {
+      saved.migrationId = globalThis.crypto?.randomUUID?.()
+        || `legacy-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saved));
+    }
+    const slotName = `${TEAM_BY_ID[saved.season.userTeam]?.name || 'Team'} career (imported)`;
+    const result = await api('importLocalSeason', {
+      season: saved.season,
+      seat: saved.seat || 'OC',
+      displayName: app.name,
+      slotName,
+      migrationId: saved.migrationId,
+    });
+    // Verify through the same account listing used on another device before
+    // telling the user that the migration is safe.
+    const check = await api('listMySeasons', {});
+    const verified = check.seasons.find((slot) => slot.id === result.seasonId
+      && slot.legacyImportId === saved.migrationId);
+    if (!verified) throw new Error('The server received the save, but verification did not complete. Your device copy is unchanged.');
+    await refreshSeasonSlots();
+  } catch (e) { setupErr(e.message); }
+}
+
+function removeLegacyBackup() {
+  modal(`<h2>Remove the device backup?</h2><p>The imported account save will stay in
+    Firestore and work across devices. Only this browser's old copy will be removed.</p>
+    <div class="modal-actions"><button class="btn btn-primary" data-a="keep">Keep backup</button>
+    <button class="btn" data-a="remove">Remove backup</button></div>`, async (act) => {
+    closeModal();
+    if (act !== 'remove') return;
+    clearSeason();
+    await refreshSeasonSlots();
+  });
+}
+
+async function resumeAccountSeason(seasonId) {
+  setupErr('');
+  try {
+    const fb = await connectFirebase();
+    app.name = app.user?.displayName || app.user?.email?.split('@')[0] || 'Coordinator';
+    const r = await fb.fn('joinSeason')({ seasonId, displayName: app.name });
+    watchSeason(fb, seasonId, r.data.seat);
+  } catch (e) { setupErr(e.message); }
+}
+
+function retireSeasonSlot(slot) {
+  modal(`<h2>Retire this save?</h2><p>${escapeHtml(slot.slotName)} will leave your active save slots.
+    A rival sharing the season keeps their own copy.</p><div class="modal-actions">
+    <button class="btn btn-primary" data-a="keep">Keep it</button>
+    <button class="btn" data-a="retire">Retire save</button></div>`, async (act) => {
+    closeModal();
+    if (act !== 'retire') return;
+    try { await api('archiveSeason', { seasonId: slot.id }); await refreshSeasonSlots(); }
+    catch (e) { setupErr(e.message); }
+  });
+}
+
+$('btn-login').addEventListener('click', async () => {
+  authErr('');
+  try {
+    const { a, auth } = await firebaseClient();
+    if (a.currentUser?.isAnonymous) await auth.signOut(a);
+    await auth.signInWithEmailAndPassword(a, $('auth-email').value.trim(), $('auth-password').value);
+  } catch (e) { authErr(authMessage(e)); }
+});
+
+$('btn-signup').addEventListener('click', async () => {
+  authErr('');
+  try {
+    const { a, auth } = await firebaseClient();
+    if (a.currentUser?.isAnonymous) await auth.signOut(a);
+    const made = await auth.createUserWithEmailAndPassword(
+      a, $('auth-email').value.trim(), $('auth-password').value);
+    const displayName = made.user.email.split('@')[0];
+    await auth.updateProfile(made.user, { displayName });
+    app.user = made.user;
+    app.name = displayName;
+    homeView('account');
+    await refreshSeasonSlots();
+  } catch (e) { authErr(authMessage(e)); }
+});
+
+$('btn-logout').addEventListener('click', async () => {
+  const { a, auth } = await firebaseClient();
+  if (app.seasonUnsub) { app.seasonUnsub(); app.seasonUnsub = null; }
+  await auth.signOut(a);
+  app.user = null;
+  homeView('auth');
+  show('setup');
+});
+
+$('btn-guest').addEventListener('click', async () => {
+  authErr('');
+  try { await connectFirebase({ anonymous: true }); homeView('guest'); offerRejoin(); }
+  catch (e) { authErr(e.message); }
+});
+$('btn-account-exhibition').addEventListener('click', () => homeView('guest'));
+$('btn-back-login').addEventListener('click', () => homeView(app.user ? 'account' : 'auth'));
+
+async function initAccountHome() {
+  try {
+    const { a, auth } = await firebaseClient();
+    auth.onAuthStateChanged(a, async (user) => {
+      if (!user || user.isAnonymous) {
+        app.user = null;
+        homeView('auth');
+        return;
+      }
+      app.user = user;
+      app.name = user.displayName || user.email?.split('@')[0] || 'Coordinator';
+      $('account-name').textContent = `Welcome, ${app.name}`;
+      $('account-email').textContent = user.email || '';
+      homeView('account');
+      await refreshSeasonSlots();
+    });
+  } catch (e) { authErr(e.message); }
+}
+initAccountHome();
 
 function show(id) {
   ['setup', 'lobby', 'season', 'designer', 'game'].forEach((s) => { $(s).hidden = s !== id; });
@@ -625,6 +873,7 @@ $('dz-save').addEventListener('click', () => {
    weeks of work to an accidental reload would be unforgivable. */
 
 const SAVE_KEY = 'booth:season';
+const RECENT_SEASON_KEY = 'booth:recent-season';
 const GAME_KEY = 'booth:game';
 
 function rememberGame(gameId, name) {
@@ -653,15 +902,13 @@ async function offerRejoin() {
     } catch (e) { setupErr(e.message); forgetGame(); }
   });
 }
-offerRejoin();
-
 function saveSeason() {
   try {
     // A shared season lives on the server. Writing a copy here meant that on
     // return the resume prompt loaded the stale local fork and quietly cut you
     // off from your rival — the save has to record the code, not the state.
     if (!link.local && app.seasonId) {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
+      localStorage.setItem(RECENT_SEASON_KEY, JSON.stringify({
         shared: true, seasonId: app.seasonId, seat: app.seat, name: app.name,
         team: app.season?.userTeam, week: app.season?.week, at: Date.now(),
       }));
@@ -775,13 +1022,14 @@ async function api(action, data) {
 
 /** Follow a shared season, and the game inside it when one is running. */
 function watchSeason(fb, seasonId, seat) {
+  if (app.seasonUnsub) app.seasonUnsub();
   app.seasonId = seasonId;
   app.seat = seat;
   link.local = false;
   app.inSeason = true;
   rememberSeasonCode(seasonId);
   let attached = null;
-  fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
+  app.seasonUnsub = fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
     const doc = snap.data();
     if (!doc) return;
     app.seasonDoc = doc;
@@ -810,47 +1058,16 @@ function watchSeason(fb, seasonId, seat) {
   });
 }
 
-$('btn-season').addEventListener('click', () => {
-  const saved = loadSeason();
-
-  // A shared season resumes by reconnecting, not by loading anything local.
-  if (saved?.shared && saved.seasonId) {
-    modal(`<h2>Season in progress</h2>
-      <p>You were ${weekLabel(saved.week || 1).toLowerCase()} with the
-        ${saved.team ? fullName(saved.team) : 'your club'}, alongside your rival.
-        Rejoining puts you back in the same booth.</p>
-      <div class="modal-actions">
-        <button class="btn btn-primary" data-a="resume">Rejoin</button>
-        <button class="btn" data-a="new">Start a new career</button></div>`, async (act) => {
-      closeModal();
-      if (act !== 'resume') { clearSeason(); pickTeam(); return; }
-      try {
-        const fb = await connectFirebase();
-        app.name = saved.name || nameVal();
-        const r = await fb.fn('joinSeason')({ seasonId: saved.seasonId, displayName: app.name });
-        watchSeason(fb, saved.seasonId, r.data.seat);
-      } catch (e) { setupErr(e.message); clearSeason(); }
-    });
-    return;
-  }
-
-  if (saved?.season) {
-    modal(`<h2>Season in progress</h2><p>You are ${weekLabel(saved.season.week).toLowerCase()} with the
-      ${fullName(saved.season.userTeam)}. Pick up where you left off?</p>
-      <div class="modal-actions"><button class="btn btn-primary" data-a="resume">Resume</button>
-      <button class="btn" data-a="new">Start fresh</button></div>`, (act) => {
-      closeModal();
-      if (act === 'resume') {
-        link.local = true;
-        app.season = hydrate(saved.season);
-        app.seat = saved.seat || 'OC';
-        openSeason();
-      } else { clearSeason(); pickTeam(); }
-    });
-    return;
-  }
-  pickTeam();
+$('btn-home').addEventListener('click', async () => {
+  if (app.seasonUnsub) { app.seasonUnsub(); app.seasonUnsub = null; }
+  app.t = null;
+  app.inSeason = false;
+  show('setup');
+  homeView('account');
+  await refreshSeasonSlots();
 });
+
+$('btn-season').addEventListener('click', () => pickTeam());
 
 function pickTeam() {
   const opts = TEAMS.map((t) => `<option value="${t.id}">${t.city} ${t.name}</option>`).join('');
@@ -863,35 +1080,33 @@ function pickTeam() {
         <option value="solo">Just me — an AI runs the other unit</option>
         <option value="rival">A rival, on their own device</option>
       </select></label>
+    <label class="form-field"><span>Save slot name</span>
+      <input id="slot-name" type="text" maxlength="40" placeholder="My coaching career"></label>
     <div class="modal-actions">
       <button class="btn btn-primary" data-a="OC">Coordinate the offense</button>
       <button class="btn btn-primary" data-a="DC">Coordinate the defense</button>
     </div>`, async (act) => {
     const team = document.getElementById('team-pick').value;
     const shared = document.getElementById('mode-pick').value === 'rival';
+    const slotName = document.getElementById('slot-name').value.trim();
     app.seat = act;
-    if (!shared) {
-      link.local = true;
-      app.season = createSeason({ seed: Math.random().toString(36).slice(2, 10), userTeam: team });
-      closeModal();
-      saveSeason();
-      openSeason();
-      return;
-    }
     try {
       const fb = await connectFirebase();
-      const r = await fb.fn('createSeason')({ seat: act, displayName: nameVal(), teamId: team });
+      app.name = app.user?.displayName || app.user?.email?.split('@')[0] || 'Coordinator';
+      const r = await fb.fn('createSeason')({
+        seat: act, displayName: app.name, teamId: team, slotName,
+      });
       closeModal();
       rememberSeasonCode(r.data.seasonId);
       watchSeason(fb, r.data.seasonId, r.data.seat);
-      showSeasonCode(r.data.seasonId);
+      if (shared) showSeasonCode(r.data.seasonId);
     } catch (e) { setupErr(e.message); closeModal(); }
   });
 }
 
 function rememberSeasonCode(id) {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
+    localStorage.setItem(RECENT_SEASON_KEY, JSON.stringify({
       shared: true, seasonId: id, seat: app.seat, name: app.name,
       team: app.season?.userTeam, week: app.season?.week, at: Date.now(),
     }));
@@ -1043,8 +1258,8 @@ function paneOffseason(pane, S) {
         : 'You are still a coordinator. That is the game.'}</p>`));
     pane.append(decisionsCard(S));
     const again = el('div', 'season-actions');
-    const b = el('button', 'btn btn-primary', 'Start a new career');
-    b.addEventListener('click', () => { clearSeason(); location.reload(); });
+    const b = el('button', 'btn btn-primary', 'Back to coaching office');
+    b.addEventListener('click', () => $('btn-home').click());
     again.append(b);
     pane.append(again);
     return;
@@ -1604,6 +1819,7 @@ async function startSeasonGame(cfg) {
   await app.t.create({
     name: app.name, seat: app.seat,
     teamName: cfg.teamName, oppName: cfg.oppName,
+    usRecord: cfg.usRecord, themRecord: cfg.themRecord,
     rosters: cfg.rosters, firstPossession: cfg.firstPossession,
     autoSeat: app.seat === 'OC' ? 'DC' : 'OC',
   });
@@ -1625,7 +1841,10 @@ function render(g, plays) {
   const s = g.state;
   const mine = app.inSeason ? app.seat : (app.t.local ? (app.viewSeat || seatOnClock(s)) : app.t.mySeat);
   const onClock = seatOnClock(s);
-  const isMyCall = mine === onClock && g.status === 'live';
+  const cpuConversionPending = s.pendingConversion?.team === 'CPU';
+  const autoSeatPending = g.autoSeat && onClock === g.autoSeat;
+  const isMyCall = mine === onClock && g.status === 'live'
+    && !cpuConversionPending && !autoSeatPending;
 
   const log = plays || [];
   app.record = callRecord(log, mine);
@@ -1656,11 +1875,27 @@ function render(g, plays) {
   });
 
   if (g.status === 'final') { renderFinal(g, plays || []); return; }
-  if (isMyCall) renderCallSheet(g, s, mine);
+  if (cpuConversionPending) {
+    $('call-title').textContent = 'Opponent conversion';
+    $('sheet').innerHTML = '<div class="prep-block"><h3>Special teams</h3><p>The opponent is choosing its conversion.</p></div>';
+    settleAutomaticCall();
+  } else if (autoSeatPending) {
+    $('call-title').textContent = 'Staff call';
+    $('sheet').innerHTML = '<div class="prep-block"><h3>Other side of the ball</h3><p>Your AI coordinator is making the call.</p></div>';
+    settleAutomaticCall();
+  } else if (isMyCall) renderCallSheet(g, s, mine);
   else renderPrep(g, s, mine, onClock);
 
   managePause(g);
   managePlayClock(g);
+}
+
+async function settleAutomaticCall() {
+  if (app.busy) return;
+  app.busy = true;
+  try { await app.t.call({ auto: true }); }
+  catch (e) { flash(e.message); }
+  finally { app.busy = false; }
 }
 
 function renderLobby(g) {
@@ -1704,6 +1939,11 @@ function renderTimeouts(g, s, isMyCall) {
 function renderBoard(g, s) {
   $('us-name').textContent = g.teamName.toUpperCase();
   $('them-name').textContent = g.oppName.toUpperCase();
+  const recordText = (r) => r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '';
+  $('us-record').textContent = recordText(g.usRecord);
+  $('them-record').textContent = recordText(g.themRecord);
+  $('us-record').hidden = !g.usRecord;
+  $('them-record').hidden = !g.themRecord;
   $('us-score').textContent = s.score.us;
   $('them-score').textContent = s.score.them;
   $('qtr').textContent = ORD[s.quarter] || 'OT';
@@ -1811,7 +2051,7 @@ function renderCallSheet(g, s, mine) {
   sheet.innerHTML = '';
 
   // A touchdown pauses everything until the conversion is decided.
-  if (s.pendingConversion) {
+  if (s.pendingConversion?.team === 'US') {
     $('call-title').textContent = 'Touchdown — your call';
     const lead = s.score.us - s.score.them;
     const box = el('div', 'group', '<h3>After the touchdown</h3>');
