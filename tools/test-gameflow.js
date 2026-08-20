@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
 import { OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
+import { createSeason } from '../public/shared/season.js';
+import { TEAMS } from '../public/shared/league.js';
+import { DEF_SPOTS } from '../public/shared/roster.js';
+import { depthChart } from '../public/shared/depth.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -65,4 +69,35 @@ const ids = seasonCallIds({
 assert.deepEqual([...ids], [customId, 'cd-cold-start-regression'],
   'the server cache should remain scoped to calls saved in this season');
 
-console.log('Game-flow tests passed.');
+// Live box scores record the slot a defender occupied during the game. The
+// roster page may later promote that same player to another slot, but his
+// existing season statistics must follow his stable identity.
+const statSeason = createSeason({ seed: 'diag0', userTeam: TEAMS[0].id });
+const defense = statSeason.rosters[statSeason.userTeam].defense;
+const slotOrder = (a, b) => DEF_SPOTS.findIndex((s) => s.id === a)
+  - DEF_SPOTS.findIndex((s) => s.id === b);
+const movedPlayer = (pos) => {
+  const group = defense.filter((p) => p.pos === pos);
+  const slots = group.map((p) => p.spot).sort(slotOrder);
+  return [...group].sort((a, b) => b.rating - a.rating)
+    .find((p, i) => p.spot !== slots[i]);
+};
+const movedDt = movedPlayer('DT');
+const movedCb = movedPlayer('CB');
+assert.ok(movedDt && movedCb, 'fixture should reorder both a DT and a CB');
+statSeason.results = [{
+  final: true,
+  home: statSeason.userTeam,
+  away: TEAMS[1].id,
+  players: { offense: [], defense: [
+    { spot: movedDt.spot, pos: movedDt.pos, name: movedDt.name, tackles: 7, sacks: 1 },
+    { spot: movedCb.spot, pos: movedCb.pos, name: movedCb.name, tackles: 4, pbu: 3, ints: 1 },
+  ] },
+}];
+const defensiveStats = depthChart(statSeason, 'defense');
+assert.equal(defensiveStats.find((p) => p.name === movedDt.name)?.tackles, 7,
+  'DT statistics should survive a depth-chart slot change');
+assert.equal(defensiveStats.find((p) => p.name === movedCb.name)?.pbu, 3,
+  'CB statistics should survive a depth-chart slot change');
+
+console.log('Regression tests passed.');

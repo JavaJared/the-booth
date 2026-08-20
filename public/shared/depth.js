@@ -94,7 +94,11 @@ export function depthChart(season, side) {
     if (!r.final || !r.players) continue;
     if (r.home !== us && r.away !== us) continue;
     for (const line of r.players[side] || []) {
-      const k = `${line.spot}|${line.name}`;
+      if (!line.name) continue;
+      // A depth-chart reorder can move the same player from DT3 to DT or CB4
+      // to CB2. Names are unique within the generated league and remain stable,
+      // while the slot is an assignment, so season stats follow the player.
+      const k = line.name;
       if (!totals[k]) totals[k] = { ...blank(), games: 0 };
       const t = totals[k];
       t.games++;
@@ -107,7 +111,7 @@ export function depthChart(season, side) {
   }
 
   return list.map((p) => {
-    const t = totals[`${p.spot}|${p.name}`] || { ...blank(), games: 0 };
+    const t = totals[p.name] || { ...blank(), games: 0 };
     return {
       spot: p.spot, pos: p.pos, name: p.name, number: p.number,
       rating: p.rating,
