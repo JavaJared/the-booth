@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
+import { OFF_BY_ID, registerSeasonCalls } from '../public/shared/playbook.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -35,5 +36,26 @@ assert.equal(touchdownResult.state.pendingConversion, null,
   'CPU conversion must not be returned as a human decision');
 assert.ok(touchdownResult.plays.some((play) => ['kick', 'two'].includes(play.conversion)),
   'CPU should choose and resolve its own conversion');
+
+// A Netlify cold start begins with only the built-in playbook. Re-registering
+// the calls stored on the season must make its random custom id resolvable.
+const customId = 'cp-cold-start-regression';
+registerSeasonCalls({
+  customPlays: [{ ...OFF_BY_ID.slants, id: customId, name: 'Cold Start Slants', custom: true }],
+});
+assert.equal(OFF_BY_ID[customId]?.name, 'Cold Start Slants',
+  'saved custom offense should be registered in a fresh server process');
+
+const customGame = {
+  state: newGameState({ firstPossession: 'US' }),
+  tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
+  filmPoints: { OC: 0, DC: 0 },
+  pending: {},
+  autoSeat: 'DC',
+  gameplan: { OC: { tempo: 'normal' }, DC: {} },
+};
+assert.doesNotThrow(() => runToNextDecision(
+  'custom-cold-start', customGame, { callId: customId }),
+'registered season play should resolve without an unknown-call error');
 
 console.log('Game-flow tests passed.');

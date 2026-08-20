@@ -186,6 +186,12 @@ export function registerCustomDefenses(list = []) {
     DEF_BY_ID[d.id] = d;
   }
 }
+
+/** Restore both halves of a saved custom playbook into this process. */
+export function registerSeasonCalls(season = {}) {
+  registerCustomPlays(season.customPlays || []);
+  registerCustomDefenses(season.customDefenses || []);
+}
 export const customDefenses = () => DEFENSE.filter((d) => d.custom);
 export const DEF_BY_ID = Object.fromEntries(DEFENSE.map((p) => [p.id, p]));
 

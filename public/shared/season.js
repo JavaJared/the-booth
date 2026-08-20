@@ -8,7 +8,7 @@ import { makeLeagueRosters, teamStrength, migrateRoster, needsMigration } from '
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
-import { registerCustomPlays, registerCustomDefenses } from './playbook.js';
+import { registerSeasonCalls } from './playbook.js';
 import { playerLinesFromPlays, simPlayerLines } from './depth.js';
 import { seasonAwards, staffHonours } from './awards.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
@@ -33,8 +33,7 @@ export function createSeason({ seed, userTeam, year = 2026 }) {
  */
 export function hydrate(saved) {
   saved = { ...saved, results: dedupeResults(saved.results || []) };
-  registerCustomPlays(saved.customPlays || []);
-  registerCustomDefenses(saved.customDefenses || []);
+  registerSeasonCalls(saved);
   if (saved.rosters && saved.schedule) return saved;
   const ids = TEAMS.map((t) => t.id);
   // Generated from the seed on year one, then carried forward: once players can

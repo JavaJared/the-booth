@@ -16,6 +16,7 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
   weekLabel } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
+import { registerSeasonCalls } from '../../public/shared/playbook.js';
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -615,6 +616,15 @@ const actions = {
       if (!seat) throw new ApiError(403, 'Not your game.');
       if (g.status !== 'live') throw new ApiError(409, 'Game is not live.');
       if (g.state.playIndex !== playIndex) throw new ApiError(409, 'Someone already ran that snap.');
+
+      // Serverless instances do not share memory. A custom call may have been
+      // installed by a different (or now-cold) instance, so rebuild the saved
+      // playbook before resolving every season snap.
+      if (g.seasonId) {
+        const seasonSnap = await tx.get(seasonRef(g.seasonId));
+        if (!seasonSnap.exists) throw new ApiError(404, 'This game has no season.');
+        registerSeasonCalls(seasonSnap.data());
+      }
 
       if (seat !== seatOnClock(g.state)) {
         const settlingCpuConversion = auto && g.state.pendingConversion?.team === 'CPU';
