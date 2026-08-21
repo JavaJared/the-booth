@@ -397,12 +397,13 @@ const actions = {
       if (!snap.exists) throw new ApiError(404, 'No season with that code.');
       const doc = snap.data();
       const seat = doc.seats?.DC?.uid === uid ? 'DC' : doc.seats?.OC?.uid === uid ? 'OC' : null;
-      if (seat !== 'DC') throw new ApiError(403, 'Opponent play overlays belong to the defense.');
+      if (!seat) throw new ApiError(403, 'You do not have a seat in this season.');
       const season = hydrate(doc);
       const next = unlockFilmOverlay(season, seat, teamId, callId);
       if (next === season) throw new ApiError(409, 'That overlay is unavailable or you need more film.');
       tx.update(ref, {
         filmBank: next.filmBank,
+        filmVersion: next.filmVersion,
         filmOverlays: next.filmOverlays,
       });
       return { balance: next.filmBank[seat], key: `${teamId}:${callId}` };

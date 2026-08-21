@@ -2,7 +2,7 @@ import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { computeEdge, newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
 import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
 import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
-import { advanceWeek, simRemainingWeek, userGame, record as seasonRecord,
+import { advanceWeek, simRemainingWeek, userGame, nextUserGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
@@ -19,7 +19,8 @@ import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.j
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 import {
-  FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SITUATIONS, filmRows, opponentDiagram,
+  FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SITUATIONS, filmRows,
+  opponentDiagram, opponentDefenseDiagram,
 } from './shared/film.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
@@ -587,11 +588,17 @@ function designerModes() {
 }
 
 function designerFilmContext() {
-  if (DZ.mode !== 'def' || app.seat !== 'DC' || !app.season) return null;
-  const game = userGame(app.season);
+  if (!['OC', 'DC'].includes(app.seat) || !app.season) return null;
+  const game = nextUserGame(app.season);
   if (!game) return null;
   const teamId = game.home === app.season.userTeam ? game.away : game.home;
-  return { teamId, name: fullName(teamId) };
+  return { teamId, name: fullName(teamId), unit: app.seat === 'DC' ? 'offense' : 'defense' };
+}
+
+function overlayDiagram(overlay = DZ.overlay) {
+  if (!overlay) return null;
+  return overlay.unit === 'defense' ? opponentDefenseDiagram(overlay.callId)
+    : opponentDiagram(overlay.callId);
 }
 
 function renderDesignerFilmControls() {
@@ -600,30 +607,34 @@ function renderDesignerFilmControls() {
   box.hidden = !context;
   if (!context) return;
 
-  const plays = OFFENSE.filter((p) => !p.custom && opponentDiagram(p.id));
+  const source = context.unit === 'offense' ? OFFENSE : DEFENSE;
+  const diagram = context.unit === 'offense' ? opponentDiagram : opponentDefenseDiagram;
+  const plays = source.filter((p) => !p.custom && diagram(p.id));
   const valid = new Set(plays.map((p) => p.id));
   if (DZ.overlay?.teamId === context.teamId) DZ.filmCallId = DZ.overlay.callId;
   if (!valid.has(DZ.filmCallId)) DZ.filmCallId = '';
 
-  $('dz-film-label').textContent = `${context.name} play overlay`;
+  $('dz-film-label').textContent = `${context.name} ${context.unit === 'offense' ? 'offensive' : 'defensive'} overlay`;
   $('dz-film-select').innerHTML = '<option value="">Select an opponent play</option>'
     + [...new Set(plays.map((p) => p.family))].map((family) => {
-      const label = family === 'run' ? 'Runs' : family === 'quick' ? 'Quick game'
-        : family === 'screen' ? 'Screens' : family === 'dropback' ? 'Dropback passes'
-        : family === 'playaction' ? 'Play action' : 'Deep shots';
+      const label = context.unit === 'defense' ? (family || 'Defensive calls')
+        : family === 'run' ? 'Runs' : family === 'quick' ? 'Quick game'
+          : family === 'screen' ? 'Screens' : family === 'dropback' ? 'Dropback passes'
+            : family === 'playaction' ? 'Play action' : 'Deep shots';
       const options = plays.filter((p) => p.family === family).map((p) =>
-        `<option value="${p.id}">${p.name} &middot; ${p.pers} personnel</option>`).join('');
+        `<option value="${p.id}">${p.name} &middot; ${p.pers}${context.unit === 'offense' ? ' personnel' : ''}</option>`).join('');
       return `<optgroup label="${label}">${options}</optgroup>`;
     }).join('');
   $('dz-film-select').value = DZ.filmCallId;
 
-  const balance = app.season.filmBank?.DC || 0;
-  const unlocked = new Set(app.season.filmOverlays?.DC || []);
+  const balance = app.season.filmBank?.[app.seat] || 0;
+  const unlocked = new Set(app.season.filmOverlays?.[app.seat] || []);
   const key = DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
   const owns = key && unlocked.has(key);
   const action = $('dz-film-action');
   action.textContent = !DZ.filmCallId ? 'Select a play'
-    : owns ? (DZ.overlay?.callId === DZ.filmCallId ? 'Overlay active' : 'Show overlay')
+    : owns ? (DZ.overlay?.callId === DZ.filmCallId && DZ.overlay?.teamId === context.teamId
+      ? 'Overlay active' : 'Show overlay')
       : `Unlock overlay · ${FILM_OVERLAY_COST} film`;
   action.disabled = !DZ.filmCallId || (!owns && balance < FILM_OVERLAY_COST);
   $('dz-film-balance').textContent = `${balance} film available`;
@@ -649,10 +660,10 @@ function openDesigner() {
     run: 'The circled player has the ball. Draw his path, then send everyone else to a block. Click a back or receiver twice to hand him the ball instead.',
     def: 'Pick a defender, then draw where he goes. Across the line is a blitz; anywhere behind it is his zone.',
   }[DZ.mode];
-  const overlay = DZ.overlay && opponentDiagram(DZ.overlay.callId);
+  const overlay = overlayDiagram();
   $('dz-overlay-note').hidden = !overlay;
   if (overlay) {
-    $('dz-overlay-label').innerHTML = `<b>Opponent film:</b> ${overlay.play.name} &middot; ${overlay.play.pers} personnel`;
+    $('dz-overlay-label').innerHTML = `<b>Opponent film:</b> ${overlay.play.name} &middot; ${overlay.play.pers}`;
   }
   const sel = $('dz-pers');
   sel.innerHTML = Object.entries(FORMATIONS)
@@ -661,6 +672,23 @@ function openDesigner() {
   renderDesignerFilmControls();
   show('designer');
   drawDesigner();
+}
+
+function appendFilmOverlaySvg(parts) {
+  const overlay = overlayDiagram();
+  if (!overlay) return;
+  for (const [spot, pts] of Object.entries(overlay.paths)) {
+    if (!pts || pts.length < 2) continue;
+    const svgPts = pts.map((q) => [fx(q[0]), fy(q[1])]);
+    const tip = svgPts[svgPts.length - 1], prev = svgPts[svgPts.length - 2];
+    const { base, points } = arrow(prev, tip, 1.5, 0.7);
+    const line = [...svgPts.slice(0, -1), base];
+    parts.push(`<path d="${line.map((q, i) => `${i ? 'L' : 'M'} ${q[0].toFixed(2)} ${q[1].toFixed(2)}`).join(' ')}" class="dz-film-route"/>`);
+    parts.push(`<polygon points="${points}" class="dz-film-arrow"/>`);
+    const start = svgPts[0];
+    parts.push(`<circle cx="${start[0]}" cy="${start[1]}" r="1.15" class="dz-film-spot"/>`);
+    parts.push(`<text x="${start[0]}" y="${start[1] - 2.1}" class="dz-film-label">${spot}</text>`);
+  }
 }
 
 function drawDesigner() {
@@ -673,6 +701,7 @@ function drawDesigner() {
     p.push(`<line x1="2" y1="${fy(y)}" x2="${DZ_W - 2}" y2="${fy(y)}" class="${y === 0 ? 'dz-los' : 'dz-grid'}"/>`);
     if (y > 0) p.push(`<text x="${DZ_W - 2.5}" y="${fy(y) + 0.5}" class="dz-yard">${y}</text>`);
   }
+  appendFilmOverlaySvg(p);
 
   // In run mode everyone owns their own path; only the designated carrier
   // writes to DZ.carrier. Treating every skill player as the ball carrier
@@ -774,21 +803,7 @@ function drawDefense() {
     if (y > 0) p.push(`<text x="${DZ_W - 2.5}" y="${fy(y) + 0.5}" class="dz-yard">${y}</text>`);
   }
   p.push(`<line x1="2" y1="${fy(10)}" x2="${DZ_W - 2}" y2="${fy(10)}" class="dz-deep"/>`);
-  const overlay = DZ.overlay && opponentDiagram(DZ.overlay.callId);
-  if (overlay) {
-    for (const [spot, pts] of Object.entries(overlay.paths)) {
-      if (!pts || pts.length < 2) continue;
-      const svgPts = pts.map((q) => [fx(q[0]), fy(q[1])]);
-      const tip = svgPts[svgPts.length - 1], prev = svgPts[svgPts.length - 2];
-      const { base, points } = arrow(prev, tip, 1.5, 0.7);
-      const line = [...svgPts.slice(0, -1), base];
-      p.push(`<path d="${line.map((q, i) => `${i ? 'L' : 'M'} ${q[0].toFixed(2)} ${q[1].toFixed(2)}`).join(' ')}" class="dz-film-route"/>`);
-      p.push(`<polygon points="${points}" class="dz-film-arrow"/>`);
-      const start = svgPts[0];
-      p.push(`<circle cx="${start[0]}" cy="${start[1]}" r="1.15" class="dz-film-spot"/>`);
-      p.push(`<text x="${start[0]}" y="${start[1] - 2.1}" class="dz-film-label">${spot}</text>`);
-    }
-  }
+  appendFilmOverlaySvg(p);
   const read = readDefense(defDesign());
   const rushing = new Set(read.rushers);
   for (const [spot, pts] of Object.entries(DZ.paths)) {
@@ -855,12 +870,19 @@ function readDesigner() {
     return;
   }
   const play = derivePlay(design);
+  const film = overlayDiagram();
+  const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
   const c = play.structure;
   const covs = [['man1', 'Man'], ['cover2', 'Cover 2'], ['tampa2', 'Tampa 2'],
     ['cover3', 'Cover 3'], ['quarters', 'Quarters']];
   const best = covs.reduce((a, b) => (play.vs[a[0]] > play.vs[b[0]] ? a : b));
   box.innerHTML = `<p class="dz-tag">${play.tag}</p>`
     + `<p class="scout-note" style="padding:0">Best against <b>${best[1]}</b>.</p>`
+    + (film?.play?.cov ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
+      ['Opponent call', film.play.name],
+      ['Expected edge', matchup > 0.035 ? '<b class="gap good">Offense</b>'
+        : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
+    ])}` : '')
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
         ['Crossers', `${c.crossers}`],
@@ -898,8 +920,15 @@ function readRunPanel() {
   }
   const play = deriveRun(runDesign());
   const r = play.structure;
+  const film = overlayDiagram();
+  const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
   box.innerHTML = `<p class="dz-tag">${play.tag}</p>`
     + `<p class="scout-note" style="padding:0">Attacks ${play.edge === 'outside' ? 'the perimeter' : 'inside'}.</p>`
+    + (film?.play?.cov ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
+      ['Opponent call', film.play.name],
+      ['Expected edge', matchup > 0.035 ? '<b class="gap good">Offense</b>'
+        : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
+    ])}` : '')
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
         ['Aiming point', r.edge === 'outside' ? 'outside the tackle' : 'between the tackles'],
@@ -923,7 +952,7 @@ const COV_LABEL = { man0: 'Cover 0', man1: 'Cover 1', cover2: 'Cover 2',
 function readDefensePanel() {
   const call = deriveDefense(defDesign());
   const d = call.structure;
-  const overlay = DZ.overlay && opponentDiagram(DZ.overlay.callId);
+  const overlay = overlayDiagram();
   const matchup = overlay ? computeEdge(overlay.play, call) : null;
   $('dz-read').innerHTML = `<p class="dz-tag">${COV_LABEL[call.cov]}</p>`
     + `<p class="scout-note" style="padding:0">${call.tag || 'base look'}</p>`
@@ -960,8 +989,9 @@ $('dz-film-select').addEventListener('change', (e) => {
   DZ.filmCallId = e.target.value;
   const context = designerFilmContext();
   const key = context && DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
-  const unlocked = new Set(app.season?.filmOverlays?.DC || []);
-  DZ.overlay = key && unlocked.has(key) ? { teamId: context.teamId, callId: DZ.filmCallId } : null;
+  const unlocked = new Set(app.season?.filmOverlays?.[app.seat] || []);
+  DZ.overlay = key && unlocked.has(key)
+    ? { teamId: context.teamId, callId: DZ.filmCallId, unit: context.unit } : null;
   renderDesignerFilmControls();
   drawDesigner();
 });
@@ -971,7 +1001,7 @@ $('dz-film-action').addEventListener('click', async () => {
   const callId = DZ.filmCallId;
   if (!context || !callId) return;
   const key = `${context.teamId}:${callId}`;
-  const owns = (app.season.filmOverlays?.DC || []).includes(key);
+  const owns = (app.season.filmOverlays?.[app.seat] || []).includes(key);
   if (!owns) {
     button.disabled = true;
     button.classList.add('is-pending');
@@ -988,7 +1018,7 @@ $('dz-film-action').addEventListener('click', async () => {
       button.removeAttribute('aria-busy');
     }
   }
-  DZ.overlay = { teamId: context.teamId, callId };
+  DZ.overlay = { teamId: context.teamId, callId, unit: context.unit };
   openDesigner();
 });
 const activePaths = () => DZ.mode === 'def' ? DZ.paths
@@ -1243,6 +1273,7 @@ function watchSeason(fb, seasonId, seat) {
   rememberSeasonCode(seasonId);
   let attached = null;
   app.seasonUnsub = fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
+    const designerWasOpen = !$('designer').hidden;
     const doc = snap.data();
     if (!doc) return;
     app.seasonDoc = doc;
@@ -1267,8 +1298,12 @@ function watchSeason(fb, seasonId, seat) {
       attached = null;
       app.t?.stop?.();
       app.t = null;
-      show('season');
       renderSeason();
+      // Film unlocks update the season document. Preserve the workspace while
+      // that snapshot refreshes the balance instead of treating every season
+      // update like navigation back from a finished game.
+      if (designerWasOpen) openDesigner();
+      else show('season');
     }
   });
 }
@@ -1454,14 +1489,22 @@ function paneWeek(pane, S) {
 }
 
 function openOpponentFilm(teamId, callId) {
-  const diagram = opponentDiagram(callId);
+  const unit = app.seat === 'DC' ? 'offense' : 'defense';
+  const diagram = unit === 'offense' ? opponentDiagram(callId) : opponentDefenseDiagram(callId);
   if (!diagram) return flash('That play has no diagram yet.');
-  DZ.overlay = { teamId, callId };
-  DZ.mode = 'def';
+  DZ.overlay = { teamId, callId, unit };
+  DZ.filmCallId = callId;
+  DZ.mode = app.seat === 'DC' ? 'def' : 'pass';
   DZ.sel = null;
-  DZ.paths = {};
-  DZ.dpos = {};
-  DZ.man = false;
+  if (app.seat === 'DC') {
+    DZ.paths = {};
+    DZ.dpos = {};
+    DZ.man = false;
+  } else {
+    DZ.routes = {};
+    DZ.blocks = {};
+    DZ.carrier = [];
+  }
   $('dz-name').value = `Answer ${diagram.play.name}`;
   openDesigner();
 }
@@ -1481,7 +1524,7 @@ function filmSituationTable(S, teamId, unit, situation, { previous = false } = {
   const cells = rows.map((row) => {
     const key = `${teamId}:${row.callId}`;
     let action = '';
-    if (app.seat === 'DC' && unit === 'offense') {
+    if ((app.seat === 'DC' && unit === 'offense') || (app.seat === 'OC' && unit === 'defense')) {
       action = unlocked.has(key)
         ? `<button class="btn btn-tiny" data-open-film="${row.callId}" data-film-team="${teamId}">Open overlay</button>`
         : `<button class="btn btn-tiny" data-buy-film="${row.callId}" data-film-team="${teamId}"${balance < FILM_OVERLAY_COST ? ' disabled' : ''}>Study &middot; ${FILM_OVERLAY_COST}</button>`;
@@ -1513,8 +1556,9 @@ function paneFilm(pane, S) {
     ? `<div><span>Available film</span><b>${balance}</b></div>
       <p>Earn ${FILM_GAME_GRANT} after each game you call, plus unused live read points. Spend ${FILM_OVERLAY_COST}
       to put an opponent concept directly over the defensive play designer.</p>`
-    : `<div><span>Offensive review</span></div>
-      <p>See which defensive calls gave your offense the most trouble in each situation.</p>`));
+    : `<div><span>Available film</span><b>${balance}</b></div>
+      <p>See which defensive calls gave your offense the most trouble. Spend ${FILM_OVERLAY_COST}
+      to put an opponent defense directly over the offensive play designer.</p>`));
 
   const last = S.lastGameFilm;
   if (last?.opponent) {

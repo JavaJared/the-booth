@@ -8,7 +8,7 @@ import {
   hashSeed, mulberry32,
 } from './engine.js';
 import { OFFENSE, OFF_BY_ID, DEF_BY_ID } from './playbook.js';
-import { FORMATIONS, runSpots } from './designer.js';
+import { FORMATIONS, runSpots, DEF_ALIGN } from './designer.js';
 
 export const FILM_OVERLAY_COST = 3;
 export const FILM_GAME_GRANT = 3;
@@ -218,4 +218,53 @@ export function opponentDiagram(callId) {
     sneak: { QB: [[26.6, 0], [26.6, 3]] },
   };
   return { play, spots, paths: diagrams[callId] || runs[callId] || {} };
+}
+
+/** A readable stock representation of each defensive call for the offensive
+    designer. The playbook stores the shell/front, so turn those rules into
+    the landmarks a coordinator would see on a whiteboard. */
+export function opponentDefenseDiagram(callId) {
+  const play = DEF_BY_ID[callId];
+  if (!play || play.custom) return null;
+  const spots = { ...DEF_ALIGN };
+  const paths = {};
+  const path = (spot, end) => { paths[spot] = [spots[spot], end]; };
+
+  const front = ['EDGE1', 'DT1', 'DT2', 'EDGE2'];
+  const extras = callId === 'nickblitz' ? ['NB', 'LB1', 'LB2']
+    : callId === 'agap' ? ['LB1', 'LB2', 'NB']
+      : ['LB1', 'NB', 'LB2'];
+  const rushers = [...front, ...extras].slice(0, play.rush);
+  for (const spot of rushers) path(spot, [spots[spot][0], -3]);
+
+  const drop = (spot, end) => { if (!rushers.includes(spot)) path(spot, end); };
+  if (play.cov === 'man0' || play.cov === 'man1') {
+    drop('CB1', [8, 11]); drop('CB2', [45, 11]); drop('NB', [17, 9]);
+    drop('LB1', [22, 8]); drop('LB2', [32, 8]);
+    if (play.cov === 'man1') {
+      drop('S1', [26.6, 21]); drop('S2', [34, 9]);
+    } else {
+      drop('S1', [20, 8]); drop('S2', [34, 8]);
+    }
+  } else if (play.cov === 'cover2' || play.cov === 'tampa2') {
+    drop('CB1', [8, 5]); drop('CB2', [45, 5]); drop('NB', [16, 8]);
+    drop('LB1', play.cov === 'tampa2' ? [26.6, 16] : [22, 10]);
+    drop('LB2', [34, 10]); drop('S1', [16, 20]); drop('S2', [38, 20]);
+  } else if (play.cov === 'quarters') {
+    drop('CB1', [7, 20]); drop('S1', [20, 20]);
+    drop('S2', [34, 20]); drop('CB2', [47, 20]);
+    drop('NB', [14, 8]); drop('LB1', [24, 9]); drop('LB2', [32, 9]);
+  } else if (play.cov === 'cover6') {
+    drop('CB1', [7, 20]); drop('S1', [20, 20]);
+    drop('S2', [38, 20]); drop('CB2', [46, 6]);
+    drop('NB', [14, 8]); drop('LB1', [24, 9]); drop('LB2', [34, 9]);
+  } else {
+    drop('CB1', [8, 19]); drop('S1', [26.6, 21]); drop('CB2', [45, 19]);
+    drop('NB', [15, 8]); drop('LB1', [24, 10]); drop('LB2', [34, 10]);
+    drop('S2', [39, 8]);
+  }
+  for (const [spot, start] of Object.entries(spots)) {
+    if (!paths[spot]) path(spot, [start[0], Math.max(8, start[1])]);
+  }
+  return { play, spots, paths };
 }

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
-import { OFFENSE, OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
+import { OFFENSE, DEFENSE, OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
 import {
   createSeason,
   dehydrate,
+  hydrate,
   finishedGameRecorded,
   recordGameFilm,
   simRemainingWeek,
@@ -14,7 +15,9 @@ import {
 import { TEAMS } from '../public/shared/league.js';
 import { DEF_SPOTS } from '../public/shared/roster.js';
 import { depthChart } from '../public/shared/depth.js';
-import { FILM_OVERLAY_COST, filmRows, opponentDiagram } from '../public/shared/film.js';
+import {
+  FILM_OVERLAY_COST, filmRows, opponentDiagram, opponentDefenseDiagram,
+} from '../public/shared/film.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -156,6 +159,17 @@ assert.equal(savedCallIds.has(customId), false,
   'opponent tendency film should not include a user-installed custom call');
 assert.ok(awardsSeason.filmBank.DC > 0,
   'completed staff games should accrue persistent film points');
+assert.ok(awardsSeason.filmBank.OC > 0,
+  'completed staff games should accrue offensive film points too');
+const legacyFilmSave = dehydrate(awardsSeason);
+delete legacyFilmSave.filmVersion;
+legacyFilmSave.filmBank = { ...legacyFilmSave.filmBank, OC: 0 };
+const migratedFilm = hydrate(structuredClone(legacyFilmSave));
+const migratedAgain = hydrate(structuredClone(migratedFilm));
+assert.ok(migratedFilm.filmBank.OC > 0,
+  'existing careers should receive retroactive OC film points');
+assert.equal(migratedAgain.filmBank.OC, migratedFilm.filmBank.OC,
+  'the OC film migration should run only once');
 assert.ok(Buffer.byteLength(JSON.stringify(dehydrate(offseason))) < 900_000,
   'a full season with league film must remain safely below Firestore document limits');
 
@@ -194,9 +208,21 @@ const designerUnlock = unlockFilmOverlay(designerFilm, 'DC', designerOpponent, u
 assert.equal(designerUnlock.filmOverlays.DC.includes(`${designerOpponent}:${unseenCall.id}`), true,
   'the upcoming opponent\'s default calls should unlock directly from the designer');
 
+designerFilm.filmBank.OC = FILM_OVERLAY_COST;
+const unseenDefense = DEFENSE.find((p) => !p.custom);
+const offenseUnlock = unlockFilmOverlay(designerFilm, 'OC', designerOpponent, unseenDefense.id);
+assert.equal(offenseUnlock.filmOverlays.OC.includes(`${designerOpponent}:${unseenDefense.id}`), true,
+  'the OC should unlock an opponent defense directly from the offensive designer');
+assert.equal(offenseUnlock.filmBank.OC, 0,
+  'an offensive overlay should spend the same film cost');
+
 for (const play of OFFENSE.filter((p) => !p.custom)) {
   assert.ok(Object.keys(opponentDiagram(play.id)?.paths || {}).length,
     `${play.name} should have an opponent-film diagram`);
+}
+for (const call of DEFENSE.filter((p) => !p.custom)) {
+  assert.equal(Object.keys(opponentDefenseDiagram(call.id)?.paths || {}).length, 11,
+    `${call.name} should diagram every defender`);
 }
 
 console.log('Regression tests passed.');

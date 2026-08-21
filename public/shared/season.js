@@ -8,7 +8,7 @@ import { makeLeagueRosters, teamStrength, migrateRoster, needsMigration } from '
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
-import { OFF_BY_ID, registerSeasonCalls } from './playbook.js';
+import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls } from './playbook.js';
 import { playerLinesFromPlays, simPlayerLines } from './depth.js';
 import { seasonAwards, staffHonours } from './awards.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
@@ -56,15 +56,22 @@ export function hydrate(saved) {
       };
     }
   }
+  const priorGames = saved.results.filter((r) =>
+    r.home === saved.userTeam || r.away === saved.userTeam);
+  const priorFilm = priorGames.reduce((points, r) =>
+    points + (r.played ? FILM_GAME_GRANT : FILM_SIM_GRANT), 0);
   if (!saved.filmBank) {
-    const priorGames = saved.results.filter((r) =>
-      r.home === saved.userTeam || r.away === saved.userTeam);
     saved.filmBank = {
-      OC: 0,
-      DC: priorGames.reduce((points, r) =>
-        points + (r.played ? FILM_GAME_GRANT : FILM_SIM_GRANT), 0),
+      OC: priorFilm,
+      DC: priorFilm,
     };
+  } else if ((saved.filmVersion || 1) < 2) {
+    // OC overlays did not exist in v1, so credit existing careers for the film
+    // their offense would already have earned. The version flag prevents a
+    // Firestore hydration from applying the migration more than once.
+    saved.filmBank = { ...saved.filmBank, OC: (saved.filmBank.OC || 0) + priorFilm };
   }
+  saved.filmVersion = 2;
   saved.filmBank = { OC: 0, DC: 0, ...saved.filmBank };
   saved.filmOverlays = { OC: [], DC: [], ...(saved.filmOverlays || {}) };
   registerSeasonCalls(saved);
@@ -127,6 +134,16 @@ export function userGame(season, week = season.week) {
     (g) => g.home === season.userTeam || g.away === season.userTeam) || null;
 }
 
+/** Current matchup, or the next scheduled one when this week is a bye. */
+export function nextUserGame(season) {
+  const current = userGame(season);
+  if (current || season.phase === 'playoffs') return current;
+  const completed = new Set(season.results.map((r) => r.id));
+  return season.schedule.games.filter((g) => g.week >= season.week
+    && (g.home === season.userTeam || g.away === season.userTeam)
+    && !completed.has(g.id)).sort((a, b) => a.week - b.week)[0] || null;
+}
+
 export function record(season, teamId = season.userTeam) {
   const row = sortedStandings(season.results.filter((r) => !r.playoff)).byId[teamId];
   return row || { w: 0, l: 0, t: 0 };
@@ -167,7 +184,7 @@ export function recordGameFilm(season, plays, cfg, earned = {}) {
       book: gameBook,
     },
     filmBank: {
-      OC: season.filmBank?.OC || 0,
+      OC: (season.filmBank?.OC || 0) + FILM_GAME_GRANT + Math.max(0, earned?.OC || 0),
       DC: (season.filmBank?.DC || 0) + FILM_GAME_GRANT + Math.max(0, earned?.DC || 0),
     },
   };
@@ -176,17 +193,18 @@ export function recordGameFilm(season, plays, cfg, earned = {}) {
 /** A scouted call is always eligible. The upcoming opponent's complete built-in
     menu is also available from the designer, even before that call appears in
     the tendency sample. */
-export function filmOverlayAvailable(season, teamId, callId) {
-  const play = OFF_BY_ID[callId];
+export function filmOverlayAvailable(season, seat, teamId, callId) {
+  const unit = seat === 'DC' ? 'offense' : seat === 'OC' ? 'defense' : null;
+  const play = unit === 'offense' ? OFF_BY_ID[callId] : unit === 'defense' ? DEF_BY_ID[callId] : null;
   if (!play || play.custom) return false;
-  const game = userGame(season);
+  const game = nextUserGame(season);
   const upcoming = game && (game.home === season.userTeam ? game.away : game.home);
-  return hasCall(season.filmBook, teamId, 'offense', callId) || upcoming === teamId;
+  return hasCall(season.filmBook, teamId, unit, callId) || upcoming === teamId;
 }
 
 /** Buy permanent access to one opponent concept in the defensive designer. */
 export function unlockFilmOverlay(season, seat, teamId, callId) {
-  if (seat !== 'DC' || !filmOverlayAvailable(season, teamId, callId)) return season;
+  if (!filmOverlayAvailable(season, seat, teamId, callId)) return season;
   const key = `${teamId}:${callId}`;
   const unlocked = season.filmOverlays?.[seat] || [];
   if (unlocked.includes(key)) return season;
@@ -281,7 +299,10 @@ export function simRemainingWeek(season, week = season.week) {
         detailed: false,
         book: gameBook,
       };
-      filmBank = { ...filmBank, DC: filmBank.DC + FILM_SIM_GRANT };
+      filmBank = {
+        OC: filmBank.OC + FILM_SIM_GRANT,
+        DC: filmBank.DC + FILM_SIM_GRANT,
+      };
     }
     return r;
   });
@@ -833,6 +854,7 @@ export function nextSeason(season, seats = ['OC', 'DC']) {
     customPlays: season.customPlays || [],
     customDefenses: season.customDefenses || [],
     filmBank: season.filmBank,
+    filmVersion: season.filmVersion,
     filmOverlays: season.filmOverlays,
     rosters,
     career,
