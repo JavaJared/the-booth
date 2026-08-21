@@ -149,6 +149,14 @@ export function readConcept(routes, opts = {}) {
 /* ------------------------------------------------------- concept to stats */
 
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const compactPath = (points = [], limit = 16) => {
+  const point = (p) => ({ x: +(p.x ?? p[0]), y: +(p.y ?? p[1]) });
+  if (points.length <= limit) return points.map(point);
+  return Array.from({ length: limit }, (_, i) => {
+    const index = Math.round(i * (points.length - 1) / (limit - 1));
+    return point(points[index]);
+  });
+};
 
 /**
  * Convert structure into the same numbers a hand-authored concept carries, so
@@ -236,6 +244,13 @@ export function derivePlay(design) {
     vs, blitzFit,
     targets: weights,
     ...(design.playAction ? { paBonus: 1.0 } : {}),
+    geometry: {
+      type: 'pass',
+      spots: { ...(FORMATIONS[design.pers]?.spots || FORMATIONS['11'].spots) },
+      paths: Object.fromEntries(Object.entries(design.assignments || {})
+        .map(([spot, points]) => [spot, compactPath(points)])),
+      blockers: [...(design.blockerSpots || [])],
+    },
     structure: c,
   };
 }
@@ -374,6 +389,17 @@ export function deriveRun(design) {
     stuff: +stuff.toFixed(3), fumble: 0.008,
     edge: r.edge, boxFit: +boxFit.toFixed(2),
     targets: design.carrierSpot === 'QB' ? { QB: 10 } : { RB1: 7, RB2: 3 },
+    geometry: {
+      type: 'run',
+      spots: runSpots(design.pers || '11'),
+      paths: {
+        ...Object.fromEntries(Object.entries(design.blocks || {})
+          .map(([spot, points]) => [spot, compactPath(points)])),
+        [design.carrierSpot || 'RB1']: compactPath(design.carrier),
+      },
+      blockers: Object.keys(design.blocks || {}),
+      carrierSpot: design.carrierSpot || 'RB1',
+    },
     structure: r,
   };
 }
@@ -464,6 +490,13 @@ export function deriveDefense(design) {
     id: design.id, name: design.name || 'Untitled', custom: true,
     cov: d.cov, box: clamp(d.box, 4, 9), rush: clamp(d.rush, 3, 7),
     runCommit: +runCommit.toFixed(2), pers, tag,
+    geometry: {
+      type: 'defense',
+      spots: { ...DEF_ALIGN, ...(design.positions || {}) },
+      paths: Object.fromEntries(Object.entries(design.paths || {})
+        .map(([spot, points]) => [spot, compactPath(points)])),
+      man: !!design.man,
+    },
     structure: d,
   };
 }

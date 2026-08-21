@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
-import { newGameState, emptyTendencies } from '../public/shared/engine.js';
+import { computeEdge, resolveSnap, newGameState, emptyTendencies } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
-import { OFFENSE, DEFENSE, OFF_BY_ID, registerSeasonCalls, seasonCallIds } from '../public/shared/playbook.js';
+import {
+  OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID, registerCustomPlays,
+  registerSeasonCalls, seasonCallIds,
+} from '../public/shared/playbook.js';
+import { derivePlay, deriveDefense } from '../public/shared/designer.js';
+import { spatialMatchup } from '../public/shared/spatial.js';
 import {
   createSeason,
   dehydrate,
@@ -228,5 +233,79 @@ assert.ok(opponentDefenseDiagram('nick2').zones.length > 0,
   'zone calls should identify coverage landmarks for the overlay');
 assert.equal(opponentDefenseDiagram('cover0').zones.length, 0,
   'man coverage should not draw zone landmarks');
+
+// Installed drawings keep their exact paths. Against the same Cover 2 call,
+// routes finishing in open grass must grade better than routes sitting on the
+// underneath defenders' landmarks, even though both remain dropback passes.
+const customPass = (id, assignments) => derivePlay({
+  id, name: id, pers: '11', assignments, blockers: 0, blockerSpots: [],
+});
+const spaceFinder = customPass('space-finder', {
+  WR1: [[3, 0], [3, 9], [13, 14]], WR2: [[50, 0], [50, 9], [42, 14]],
+  WR3: [[17, 1], [27, 6]], TE1: [[35, 0], [27, 12]],
+});
+const zoneSitters = customPass('zone-sitters', {
+  WR1: [[3, 0], [8, 5]], WR2: [[50, 0], [45, 5]],
+  WR3: [[17, 1], [16, 8]], TE1: [[35, 0], [34, 10]],
+});
+assert.deepEqual(spaceFinder.geometry.paths.WR1.at(-1), { x: 13, y: 14 },
+  'a custom play should preserve its original route coordinates');
+assert.ok(Object.values(spaceFinder.geometry.paths).every((path) =>
+  path.every((point) => !Array.isArray(point))),
+'saved geometry should avoid Firestore-forbidden nested arrays');
+const fullSpatialPlaybook = {
+  ...offseason,
+  customPlays: Array.from({ length: 40 }, (_, i) => ({ ...spaceFinder, id: `space-${i}` })),
+};
+assert.ok(Buffer.byteLength(JSON.stringify(dehydrate(fullSpatialPlaybook))) < 900_000,
+  'forty geometry-backed calls should remain safely below the Firestore document limit');
+const openSpatial = spatialMatchup(spaceFinder, DEF_BY_ID.nick2);
+const closedSpatial = spatialMatchup(zoneSitters, DEF_BY_ID.nick2);
+assert.ok(openSpatial.edge > closedSpatial.edge + 0.04,
+  'exact route spacing should create a material matchup advantage');
+assert.ok(computeEdge(spaceFinder, DEF_BY_ID.nick2)
+  > computeEdge(zoneSitters, DEF_BY_ID.nick2) + 0.015,
+  'the spatial advantage should survive the complete shell matchup calculation');
+assert.ok(openSpatial.targetWeights.WR2 > spaceFinder.targets.WR2,
+  'the quarterback read should favor a receiver whose route finds open space');
+assert.notEqual(spatialMatchup(spaceFinder, DEF_BY_ID.cover0).edge, 0,
+  'route separation should also be evaluated against man assignments');
+const unprotectedBlitz = spatialMatchup(spaceFinder, DEF_BY_ID.agap);
+const protectedBlitzPlay = derivePlay({
+  id: 'protected-space-finder', name: 'Protected Space Finder', pers: '11',
+  assignments: {
+    WR1: [[3, 0], [3, 9], [13, 14]], WR2: [[50, 0], [50, 9], [42, 14]],
+    WR3: [[17, 1], [27, 6]], TE1: [[35, 0], [27, 12]],
+    RB1: [[24, -4], [23, -1]],
+  },
+  blockers: 1, blockerSpots: ['RB1'],
+});
+const protectedBlitz = spatialMatchup(protectedBlitzPlay, DEF_BY_ID.agap);
+assert.ok(protectedBlitz.pressure > unprotectedBlitz.pressure,
+  'a drawn protection path aligned with an extra rusher should reduce exact pressure');
+registerCustomPlays([spaceFinder, zoneSitters]);
+const spatialOutcome = resolveSnap(newGameState({ firstPossession: 'US' }),
+  spaceFinder.id, 'nick2', () => 0.99, emptyTendencies());
+assert.equal(spatialOutcome.designEdge, +openSpatial.edge.toFixed(3),
+  'the snap resolver should apply and expose the exact design edge');
+const legacySpaceFinder = { ...spaceFinder };
+delete legacySpaceFinder.geometry;
+assert.equal(spatialMatchup(legacySpaceFinder, DEF_BY_ID.nick2).edge, 0,
+  'legacy custom calls without saved paths should keep their prior aggregate behavior');
+
+const drawnZone = deriveDefense({
+  id: 'drawn-zone', name: 'Drawn Zone', positions: {}, man: false,
+  paths: {
+    EDGE1: [[17, 1], [17, -3]], DT1: [[23, 1], [23, -3]],
+    DT2: [[30, 1], [30, -3]], EDGE2: [[36, 1], [36, -3]],
+    CB1: [[5, 6], [8, 5]], CB2: [[48, 6], [45, 5]], NB: [[14, 5], [16, 8]],
+    LB1: [[23, 6], [22, 10]], LB2: [[31, 6], [34, 10]],
+    S1: [[20, 13], [16, 20]], S2: [[34, 13], [38, 20]],
+  },
+});
+assert.deepEqual(drawnZone.geometry.paths.S1.at(-1), { x: 16, y: 20 },
+  'a custom defense should preserve its exact zone landmarks');
+assert.notEqual(spatialMatchup(OFF_BY_ID.mesh, drawnZone).edge, 0,
+  'built-in offense should be spatially evaluated against a drawn defense');
 
 console.log('Regression tests passed.');

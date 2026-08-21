@@ -22,6 +22,7 @@ import {
   FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SITUATIONS, filmRows,
   opponentDiagram, opponentDefenseDiagram,
 } from './shared/film.js';
+import { spatialMatchup } from './shared/spatial.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
 
@@ -866,6 +867,7 @@ function readDesigner() {
     pers: DZ.pers, playAction: DZ.pa,
     assignments: Object.fromEntries(Object.entries(DZ.routes).filter(([, v]) => v.length > 1)),
     blockers: (DZ.blockers || []).length,
+    blockerSpots: [...(DZ.blockers || [])],
   };
   const box = $('dz-read');
   const routed = Object.keys(design.assignments).length;
@@ -876,6 +878,7 @@ function readDesigner() {
   const play = derivePlay(design);
   const film = overlayDiagram();
   const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
+  const exact = film?.play?.cov ? spatialMatchup(play, film.play).edge : 0;
   const c = play.structure;
   const covs = [['man1', 'Man'], ['cover2', 'Cover 2'], ['tampa2', 'Tampa 2'],
     ['cover3', 'Cover 3'], ['quarters', 'Quarters']];
@@ -886,6 +889,7 @@ function readDesigner() {
       ['Opponent call', film.play.name],
       ['Expected edge', matchup > 0.035 ? '<b class="gap good">Offense</b>'
         : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
+      ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
@@ -926,12 +930,14 @@ function readRunPanel() {
   const r = play.structure;
   const film = overlayDiagram();
   const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
+  const exact = film?.play?.cov ? spatialMatchup(play, film.play).edge : 0;
   box.innerHTML = `<p class="dz-tag">${play.tag}</p>`
     + `<p class="scout-note" style="padding:0">Attacks ${play.edge === 'outside' ? 'the perimeter' : 'inside'}.</p>`
     + (film?.play?.cov ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
       ['Opponent call', film.play.name],
       ['Expected edge', matchup > 0.035 ? '<b class="gap good">Offense</b>'
         : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
+      ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
@@ -958,12 +964,14 @@ function readDefensePanel() {
   const d = call.structure;
   const overlay = overlayDiagram();
   const matchup = overlay ? computeEdge(overlay.play, call) : null;
+  const exact = overlay ? spatialMatchup(overlay.play, call).edge : 0;
   $('dz-read').innerHTML = `<p class="dz-tag">${COV_LABEL[call.cov]}</p>`
     + `<p class="scout-note" style="padding:0">${call.tag || 'base look'}</p>`
     + (overlay ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
       ['Opponent call', overlay.play.name],
       ['Expected edge', matchup < -0.035 ? '<b class="gap good">Defense</b>'
         : matchup > 0.035 ? '<b class="gap bad">Offense</b>' : 'Even'],
+      ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
     + `<label class="dz-check" style="margin:.6rem 0"><input type="checkbox" id="dz-man"${DZ.man ? ' checked' : ''}> Backs play man</label>`
     + '<div class="dz-read"><h4>Structure</h4></div>'
@@ -1066,6 +1074,7 @@ $('dz-save').addEventListener('click', () => {
     pers: DZ.pers, playAction: DZ.pa,
     assignments: Object.fromEntries(Object.entries(DZ.routes).filter(([, v]) => v.length > 1)),
     blockers: (DZ.blockers || []).length,
+    blockerSpots: [...(DZ.blockers || [])],
   };
   const bad = validate(design);
   if (bad.length) return flash(bad[0]);
@@ -2597,6 +2606,10 @@ function renderFeed(g, plays) {
           ` <span class="verdict ${good ? 'good' : 'bad'}">${word}</span>`);
       }
       if (o.readEdge < -0.02) row.append(el('div', 'tell', 'They read it. You have shown that look too often here.'));
+      const designWon = ours ? o.designEdge > 0.035 : o.designEdge < -0.035;
+      const designLost = ours ? o.designEdge < -0.035 : o.designEdge > 0.035;
+      if (designWon) row.append(el('div', 'tell', 'Your design created a clean schematic answer.'));
+      else if (designLost) row.append(el('div', 'tell', 'Their design closed the space you attacked.'));
       if (o.predictionHit) row.append(el('div', 'tell', `Read confirmed: ${o.predictionActual}. +1 film point.`));
       box.append(row);
     });

@@ -9,6 +9,7 @@ import {
 import {
   pickTarget, coverDefender, pickTackler, pickRusher, talentEdge, protectionFactor, bySpot,
 } from './roster.js';
+import { spatialMatchup } from './spatial.js';
 
 // ---------------------------------------------------------------- RNG
 export function hashSeed(str) {
@@ -121,13 +122,14 @@ export function computeEdge(off, def, ctx = {}) {
   const persEdge = (PERS_WEIGHT[off.pers] - DEF_PERS_WEIGHT[def.pers]) * 0.022;
   const readEdge = ctx.readEdge || 0;
   const planEdge = ctx.planEdge || 0;
+  const designEdge = ctx.spatialEdge ?? spatialMatchup(off, def).edge;
 
   if (off.family === 'run') {
     const boxEdge = (7 - def.box) * 0.048 * off.boxFit;
     const commit = -def.runCommit * 0.26 * off.boxFit;
     // Outside runs care less about box count, more about defensive width.
     const edgeRun = off.edge === 'outside' ? (def.pers === 'heavy' ? 0.05 : 0) : 0;
-    return boxEdge + commit + edgeRun + persEdge + readEdge + planEdge;
+    return boxEdge + commit + edgeRun + persEdge + readEdge + planEdge + designEdge;
   }
 
   const covEdge = off.vs[def.cov] || 0;
@@ -136,7 +138,7 @@ export function computeEdge(off, def, ctx = {}) {
   const pa = off.paBonus
     ? off.paBonus * (def.runCommit * 0.20 + (runEstablishment(ctx.tendencies) - 0.42) * 0.16)
     : 0;
-  return covEdge + blitzEdge + pa - persEdge * 0.5 + readEdge + planEdge;
+  return covEdge + blitzEdge + pa - persEdge * 0.5 + readEdge + planEdge + designEdge;
 }
 
 // Penalty the offense pays for being predictable, scaled by how far the
@@ -186,12 +188,14 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const readEdge = tendencyRead(off, def, tendencies, state);
   const planEdge = planEdgeFor(off, plans.offense);
+  const design = spatialMatchup(off, def);
 
   // Who is actually on the field for this snap.
   const offRoster = plans.offRoster, defRoster = plans.defRoster;
-  let cast = null, talent = 0;
+  let cast = null, talent = 0, targetDesignEdge = 0;
   if (offRoster && defRoster) {
-    const target = pickTarget(off, offRoster, rng);
+    const target = pickTarget({ ...off, targets: design.targetWeights }, offRoster, rng);
+    targetDesignEdge = clamp((design.reads[target?.spot] || 0) * 0.025, -0.025, 0.025);
     const defender = off.family === 'run'
       ? pickTackler(off, def, defRoster, rng)
       : coverDefender(target?.spot, def, defRoster);
@@ -199,12 +203,15 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
     talent = talentEdge(off, def, target, defender, offRoster, defRoster);
   }
 
-  const edge = computeEdge(off, def, { readEdge, planEdge, tendencies }) + talent;
+  const exactEdge = clamp(design.edge + targetDesignEdge, -0.11, 0.11);
+  const edge = computeEdge(off, def, {
+    readEdge, planEdge, tendencies, spatialEdge: exactEdge,
+  }) + talent;
 
   const base = {
     offId, defId, offName: off.name, defName: def.name,
     family: off.family, edge: +edge.toFixed(3), readEdge: +readEdge.toFixed(3),
-    talent: +talent.toFixed(3),
+    talent: +talent.toFixed(3), designEdge: +exactEdge.toFixed(3),
     yards: 0, turnover: null, complete: null, sack: false, touchdown: false,
     outOfBounds: false, clockStops: false, penalty: null,
   };
@@ -218,7 +225,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const res = off.family === 'run'
     ? resolveRun(off, def, edge, rng)
-    : resolvePass(off, def, edge, rng, offRoster);
+    : resolvePass(off, def, edge, rng, offRoster, design);
 
   const out = { ...base, ...res };
   if (cast) out.cast = creditPlay(off, out, cast);
@@ -296,11 +303,12 @@ function resolveRun(off, def, edge, rng) {
   return { yards: y, desc: y >= 15 ? `Breaks through for ${y}.` : `Gain of ${y}.` };
 }
 
-function resolvePass(off, def, edge, rng, offRoster) {
+function resolvePass(off, def, edge, rng, offRoster, design = {}) {
   const extraRush = def.rush - 4;
   const protection = (1 - 0.045 * PERS_WEIGHT[off.pers]) * (offRoster ? protectionFactor(offRoster) : 1);
   const sackP = clamp(
-    off.sack * (1 + 0.55 * extraRush * (1 - off.blitzFit)) * protection,
+    off.sack * (1 + 0.55 * extraRush * (1 - off.blitzFit)) * protection
+      * clamp(1 - (design.pressure || 0) * 4, 0.75, 1.3),
     0.005, 0.30
   );
   if (rng() < sackP) {
