@@ -16,6 +16,7 @@ import {
   liveConfig,
   finishedGameRecorded,
   recordGameFilm,
+  nextSeason,
   simRemainingWeek,
   startOffseason,
   unlockFilmOverlay,
@@ -24,7 +25,9 @@ import { TEAMS } from '../public/shared/league.js';
 import {
   DEF_SPOTS, assignmentTraits, offensivePlayFit, talentMatchup,
 } from '../public/shared/roster.js';
-import { ratingFromTraits, traitScore } from '../public/shared/ratings.js';
+import {
+  ageDevelopmentMultiplier, developmentTrajectory, ratingFromTraits, traitScore, traitXpCost,
+} from '../public/shared/ratings.js';
 import { addToRoster, ageRoster, makeClass } from '../public/shared/draft.js';
 import { depthChart } from '../public/shared/depth.js';
 import {
@@ -140,12 +143,54 @@ assert.deepEqual(rosterProspect.traits,
 const youngRoster = { offense: [{
   spot: 'QB', pos: 'QB', name: 'Progression Fixture', rating: 75, age: 21,
   traits: { arm: 78, acc: 72, poise: 75, field: 76 }, development: 'quick',
+  trainingXp: { acc: traitXpCost(72) - 1 },
 }], defense: [] };
-const agedPlayer = ageRoster(youngRoster, 'ratings-age', 2027).offense[0];
+const agedPlayer = ageRoster(youngRoster, 'ratings-age', 2027, {
+  _teamGames: 17, 'Progression Fixture': { games: 17, att: 500 },
+}).offense[0];
 assert.notDeepEqual(agedPlayer.traits, youngRoster.offense[0].traits,
   'annual development should move individual attributes rather than only overall');
 assert.equal(agedPlayer.rating, ratingFromTraits(agedPlayer.pos, agedPlayer.traits, 75),
   'post-development overall should be derived from the updated traits');
+assert.ok(agedPlayer.developmentHistory.some((c) => c.trait === 'acc' && c.to > c.from),
+  'offseason gains should retain an explainable per-trait history');
+assert.ok(ageDevelopmentMultiplier(21) > ageDevelopmentMultiplier(30)
+  && ageDevelopmentMultiplier(30) > ageDevelopmentMultiplier(35),
+'development speed should decrease across the player aging curve');
+assert.ok(traitXpCost(92) > traitXpCost(72),
+  'elite traits should require more experience to raise than average traits');
+assert.equal(developmentTrajectory({ age: 22, development: 'quick' }), 'Rapid ascent',
+  'the roster trajectory should explain a young quick developer');
+
+const experienceFixture = { offense: [{
+  spot: 'WR1', pos: 'WR', name: 'Experience Fixture', rating: 75, age: 24,
+  traits: { speed: 75, hands: 75, route: 75, release: 75, burst: 75 },
+  development: 'normal',
+}], defense: [] };
+const idleExperience = ageRoster(experienceFixture, 'playing-time-xp', 2027, {
+  _teamGames: 0,
+}).offense[0];
+const starterExperience = ageRoster(experienceFixture, 'playing-time-xp', 2027, {
+  _teamGames: 17, 'Experience Fixture': { games: 17, targets: 120 },
+}).offense[0];
+assert.ok(starterExperience.trainingXp.route > idleExperience.trainingXp.route,
+  'real playing time should bank more role-specific experience than a season without appearances');
+assert.ok(starterExperience.trainingXp.route > starterExperience.trainingXp.speed,
+  'playing experience should emphasize assignment skills instead of raising every trait evenly');
+
+const veteran = { spot: 'S1', pos: 'S', name: 'Maintenance Fixture', rating: 75, age: 34,
+  traits: { range: 75, instinct: 75, tackle: 75, cover: 75, speed: 75 },
+  development: 'normal' };
+const decliningVeteran = ageRoster({ offense: [], defense: [veteran] }, 'maint', 2027,
+  { _teamGames: 17, 'Maintenance Fixture': { games: 17 } }).defense[0];
+const maintainedVeteran = ageRoster({ offense: [], defense: [{ ...veteran,
+  practiceLoad: { range: 18, instinct: 18, tackle: 18, cover: 18, speed: 18 },
+}] }, 'maint', 2027, { _teamGames: 17, 'Maintenance Fixture': { games: 17 } }).defense[0];
+assert.ok(Object.keys(veteran.traits).every((key) =>
+  maintainedVeteran.traits[key] >= decliningVeteran.traits[key]),
+'practice on an older player should mitigate decline on the attributes that were maintained');
+assert.ok(maintainedVeteran.developmentHistory.some((c) => c.source === 'maintenance'),
+  'prevented veteran decline should be visible in development history');
 
 // Two equally rated receivers should fit different concepts based on how they
 // win. Speed matters on verticals; detailed route skill matters on a comeback.
@@ -203,6 +248,9 @@ assert.ok(fastSnaps.completions > routeSnaps.completions + 20,
   'assignment-specific traits should create a measurable live completion advantage');
 assert.equal(fastSnaps.matchup.label, 'Deep-route execution',
   'snap outcomes should explain which player assignment was evaluated');
+assert.ok(fastSnaps.matchup.decisive?.offense?.key
+  && fastSnaps.matchup.decisive?.defense?.key,
+'snap outcomes should retain the exact opposing traits used by post-play feedback');
 
 // Weekly practice belongs to one coordinator, carries three periods, and has
 // diminishing returns when the same work is repeated.
@@ -230,6 +278,23 @@ assert.throws(() => addPracticePeriod(practiceSeason, 'OC',
 assert.throws(() => addPracticePeriod(createSeason({ seed: 'wrong-unit', userTeam: TEAMS[0].id }),
   'DC', { type: 'drill', drillId: 'wr-route' }), /your unit/i,
 'a defensive coordinator cannot assign an offensive drill');
+let agePractice = createSeason({ seed: 'practice-aging-curve', userTeam: TEAMS[0].id });
+const agePracticeRoster = structuredClone(agePractice.rosters[agePractice.userTeam]);
+const practiceWrs = agePracticeRoster.offense.filter((p) => p.pos === 'WR').slice(0, 2);
+for (const [index, p] of practiceWrs.entries()) {
+  p.age = index ? 33 : 22;
+  p.development = 'normal';
+  p.trainingXp = { route: 0 };
+  p.traits.route = 72;
+}
+agePractice.rosters[agePractice.userTeam] = agePracticeRoster;
+agePractice = addPracticePeriod(agePractice, 'OC',
+  { type: 'drill', drillId: 'wr-route' }).season;
+const trainedByName = new Map(agePractice.rosters[agePractice.userTeam].offense
+  .filter((p) => practiceWrs.some((wr) => wr.name === p.name)).map((p) => [p.name, p]));
+assert.ok(trainedByName.get(practiceWrs[0].name).trainingXp.route
+  > trainedByName.get(practiceWrs[1].name).trainingXp.route,
+'the same practice period should produce more development XP for a young player than a veteran');
 const preparedWr = practicedRoster(practiceSeason).offense.find((p) => p.spot === 'WR1');
 assert.equal(preparedWr.traits.route, Math.min(99, permanentRoute + 6),
   'drill ratings should be applied to a temporary game-week roster');
@@ -267,6 +332,8 @@ for (let period = 0; period < 3; period++) {
 }
 assert.equal(+practiceEffects(playPractice, 'OC').plays.verts.toFixed(3), 0.039,
   'three default-play periods should sum diminishing familiarity gains');
+assert.equal(practiceEffects(playPractice, 'OC').playReps.verts, 3,
+  'practice effects should retain the rep count for transparent in-game feedback');
 assert.ok(practicedStrength(playPractice).off > playPractice.strength[playPractice.userTeam].off,
   'rehearsed offensive calls should provide a modest expected-value benefit in fast simulation');
 const scheduledPracticeGame = playPractice.schedule.games.find((g) =>
@@ -289,12 +356,15 @@ const basePracticeSnap = resolveSnap(newGameState({ firstPossession: 'US' }), 'v
 const reppedPracticeSnap = resolveSnap(newGameState({ firstPossession: 'US' }), 'verts', 'nick1',
   mulberry32(hashSeed('practice-edge')), emptyTendencies(), {
     practiceEdge: practiceCfg.practice.OC.plays.verts,
+    practiceReps: practiceCfg.practice.OC.playReps.verts,
     offRoster: practiceCfg.rosters.US.offense, defRoster: practiceCfg.rosters.CPU.defense,
   });
 assert.equal(+(reppedPracticeSnap.edge - basePracticeSnap.edge).toFixed(3), 0.039,
   'play familiarity should add its exact bounded edge during snap resolution');
 assert.equal(reppedPracticeSnap.practiceEdge, 0.039,
   'the outcome should expose practice impact for in-game feedback');
+assert.equal(reppedPracticeSnap.practiceReps, 3,
+  'the outcome should explain how many practice periods created its edge');
 const playedPractice = { ...playPractice, results: [{
   week: playPractice.week, home: playPractice.userTeam, away: TEAMS[1].id, final: true,
 }] };
@@ -424,6 +494,16 @@ assert.equal(migratedAgain.filmBank.OC, migratedFilm.filmBank.OC,
   'the OC film migration should run only once');
 assert.ok(Buffer.byteLength(JSON.stringify(dehydrate(offseason))) < 900_000,
   'a full season with league film must remain safely below Firestore document limits');
+const progressedSeason = nextSeason(offseason);
+const progressedUser = progressedSeason.rosters[progressedSeason.userTeam].offense[0];
+const progressedCpu = progressedSeason.rosters[TEAMS.find((t) => t.id !== progressedSeason.userTeam).id]
+  .offense[0];
+assert.ok(progressedUser.trainingXp && Object.keys(progressedUser.trainingXp).length,
+  'the user roster should retain detailed trait experience across seasons');
+assert.equal(progressedCpu.trainingXp, undefined,
+  'CPU rosters should not bloat shared saves with unused explainability data');
+assert.ok(Buffer.byteLength(JSON.stringify(dehydrate(progressedSeason))) < 900_000,
+  'detailed user development should remain safely below Firestore document limits');
 
 const filmUs = TEAMS[0].id, filmThem = TEAMS[1].id;
 const detailedFilm = recordGameFilm(createSeason({ seed: 'detailed-film', userTeam: filmUs }), [{

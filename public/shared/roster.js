@@ -5,8 +5,8 @@
 import { mulberry32, hashSeed } from './engine.js';
 import { FIRST, LAST, RESERVED } from './names.js';
 import {
-  POSITION_TRAITS, DEVELOPMENT_LABEL, developmentFromRng,
-  traitScore, traitsFromRating, visibleTraits,
+  POSITION_TRAITS, TRAITS, DEVELOPMENT_LABEL, developmentFromRng,
+  traitScore, traitValue, traitsFromRating, visibleTraits,
 } from './ratings.js';
 import { offenseGeometry, defenseGeometry } from './spatial.js';
 
@@ -385,11 +385,19 @@ export function talentMatchup(off, def, target, defender, offRoster, defRoster, 
     return { edge, label: off.edge === 'outside' ? 'Perimeter execution' : 'Interior execution',
       offense: { player: target?.name, score: Math.round(carrier) },
       support: { player: o.OL?.name, score: Math.round(blocking) },
-      defense: { player: defender?.name, score: Math.round(tackling) } };
+      defense: { player: defender?.name, score: Math.round(tackling) },
+      decisive: {
+        offense: { key: off.edge === 'outside' ? 'agility' : 'power',
+          label: TRAITS[off.edge === 'outside' ? 'agility' : 'power'],
+          value: traitValue(target, off.edge === 'outside' ? 'agility' : 'power') },
+        defense: { key: 'tackle', label: TRAITS.tackle, value: traitValue(defender, 'tackle') },
+      } };
   }
   const man = def.cov.startsWith('man');
-  const receiver = traitScore(target, assignmentTraits(off, target));
-  const rawCover = traitScore(defender, coverageTraits(def, defender, off, target));
+  const receiverWeights = assignmentTraits(off, target);
+  const defenderWeights = coverageTraits(def, defender, off, target);
+  const receiver = traitScore(target, receiverWeights);
+  const rawCover = traitScore(defender, defenderWeights);
   const zoneOverall = defRoster ? effectiveCover(defender, defRoster, false) : rawCover;
   const cover = man ? rawCover : rawCover * 0.70 + zoneOverall * 0.30;
   const qb = traitScore(o.QB, assignmentTraits(off, o.QB, 'qb'));
@@ -397,12 +405,25 @@ export function talentMatchup(off, def, target, defender, offRoster, defRoster, 
   const rush = traitScore(rusher, assignmentTraits(off, rusher, 'rusher'));
   const matchup = (receiver - cover) / 100 * (man ? 0.16 : 0.10);
   const pressure = rusher ? (protect - rush) / 850 : 0;
+  const facts = routeFacts(off, target?.spot);
+  const pair = defender?.pos === 'S' && facts.depth >= 17 ? ['speed', 'range']
+    : man && facts.depth <= 10 && Number.isFinite(target?.traits?.release)
+      && Number.isFinite(defender?.traits?.press) ? ['release', 'press']
+      : facts.cuts && Number.isFinite(defender?.traits?.agility) ? ['route', 'agility']
+        : ['route', 'cover'];
   return { edge: matchup + (qb - 75) / 300 + pressure,
-    label: routeFacts(off, target?.spot).depth >= 17 ? 'Deep-route execution' : 'Route execution',
+    label: facts.depth >= 17 ? 'Deep-route execution' : 'Route execution',
     offense: { player: target?.name, score: Math.round(receiver) },
     support: { player: o.QB?.name, score: Math.round(qb) },
     defense: { player: defender?.name, score: Math.round(cover) },
-    pressure: rusher ? { offense: Math.round(protect), defense: Math.round(rush) } : null };
+    decisive: {
+      offense: { key: pair[0], label: TRAITS[pair[0]], value: traitValue(target, pair[0]) },
+      defense: { key: pair[1], label: TRAITS[pair[1]], value: traitValue(defender, pair[1]) },
+    },
+    pressure: rusher ? {
+      offense: Math.round(protect), defense: Math.round(rush),
+      blocker: o.OL?.name, rusher: rusher?.name,
+    } : null };
 }
 
 export function talentEdge(off, def, target, defender, offRoster, defRoster, rusher = null) {

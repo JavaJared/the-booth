@@ -86,10 +86,33 @@ export function depthChart(season, side) {
   const roster = season.rosters[season.userTeam];
   if (!roster) return [];
   const list = orderByTalent(roster[side], side);
-  const us = season.userTeam;
 
-  // Add up every week that has actually been played.
+  const totals = playerSeasonTotals(season, side);
+
+  return list.map((p) => {
+    const t = totals[p.name] || { ...blank(), games: 0 };
+    return {
+      spot: p.spot, pos: p.pos, name: p.name, number: p.number,
+      rating: p.rating,
+      traits: p.traits || null,
+      trainingXp: p.trainingXp || {},
+      practiceLoad: p.practiceLoad || {},
+      developmentHistory: p.developmentHistory || [],
+      development: p.development || 'normal',
+      age: p.age ?? null,
+      rookie: p.draftedIn != null && p.draftedIn >= (season.year - 1),
+      ...t,
+      sacks: halves(t.sacks),
+      tackles: Math.round(t.tackles),
+    };
+  });
+}
+
+/** Stored box scores are the authoritative playing-time record used by both
+ * the roster UI and offseason development. */
+export function playerSeasonTotals(season, side) {
   const totals = {};
+  const us = season.userTeam;
   for (const r of season.results) {
     if (!r.final || !r.players) continue;
     if (r.home !== us && r.away !== us) continue;
@@ -109,21 +132,7 @@ export function depthChart(season, side) {
       }
     }
   }
-
-  return list.map((p) => {
-    const t = totals[p.name] || { ...blank(), games: 0 };
-    return {
-      spot: p.spot, pos: p.pos, name: p.name, number: p.number,
-      rating: p.rating,
-      traits: p.traits || null,
-      development: p.development || 'normal',
-      age: p.age ?? null,
-      rookie: p.draftedIn != null && p.draftedIn >= (season.year - 1),
-      ...t,
-      sacks: halves(t.sacks),
-      tackles: Math.round(t.tackles),
-    };
-  });
+  return totals;
 }
 
 /**

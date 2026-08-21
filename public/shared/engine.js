@@ -190,6 +190,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
   const readEdge = tendencyRead(off, def, tendencies, state);
   const planEdge = planEdgeFor(off, plans.offense);
   const practiceEdge = plans.practiceEdge || 0;
+  const practiceReps = plans.practiceReps || 0;
   const design = spatialMatchup(off, def);
 
   // Who is actually on the field for this snap.
@@ -216,6 +217,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
     family: off.family, edge: +edge.toFixed(3), readEdge: +readEdge.toFixed(3),
     talent: +talent.toFixed(3), playerMatchup, designEdge: +exactEdge.toFixed(3),
     practiceEdge: +practiceEdge.toFixed(3),
+    practiceReps,
     yards: 0, turnover: null, complete: null, sack: false, touchdown: false,
     outOfBounds: false, clockStops: false, penalty: null,
   };

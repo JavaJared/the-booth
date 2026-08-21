@@ -652,7 +652,7 @@ table.scout s{color:var(--ink-3)}
 .depth-group{background:var(--pad);border:1px solid var(--ink);border-radius:2px;overflow:hidden}
 .depth-group h4{margin:0;font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
   font-size:.63rem;font-weight:600;color:var(--paper);background:var(--ink);padding:.28rem .55rem}
-.depth-row{display:grid;grid-template-columns:2rem 2rem minmax(0,1fr) 2.6rem minmax(0,1.6fr);
+.depth-row{display:grid;grid-template-columns:2rem 2rem minmax(0,1fr) 2.6rem minmax(0,1.6fr) auto;
   gap:.5rem;align-items:baseline;padding:.4rem .55rem;border-bottom:1px solid var(--hair)}
 .depth-row:last-child{border-bottom:0}
 .depth-row:nth-child(odd){background:rgba(217,227,230,.2)}
@@ -674,9 +674,22 @@ table.scout s{color:var(--ink-3)}
 .depth-row .rate.bad{color:var(--pencil)}
 .depth-row .line{font-family:var(--mono);font-size:.7rem;color:var(--ink-2);
   font-variant-numeric:tabular-nums}
+.player-expand{border:0;border-bottom:1px solid var(--ink);background:transparent;color:var(--ink);
+  padding:.08rem 0;font-family:var(--cond);font-size:.62rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.08em;cursor:pointer}
+.player-detail{padding:.75rem .85rem 1rem;border-bottom:1px solid var(--ink);background:var(--paper)}
+.player-detail h5{margin:.8rem 0 .35rem;font-family:var(--cond);font-size:.66rem;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--ink-2)}
+.player-detail h5:first-child{margin-top:0}
+.player-detail p{margin:.15rem 0;font-size:.78rem}
+.player-detail-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(15rem,1fr);gap:1rem}
+.weekly-boost{color:#2F7D4F;font-family:var(--cond);font-size:.62rem;text-transform:uppercase;
+  letter-spacing:.04em;white-space:nowrap}
 @media (max-width:720px){
   .depth-row{grid-template-columns:1.8rem 1.8rem minmax(0,1fr) 2.4rem;row-gap:.15rem}
   .depth-row .line{grid-column:3/-1;font-size:.68rem}
+  .depth-row .player-expand{grid-column:3/-1;justify-self:end}
+  .player-detail-grid{grid-template-columns:1fr}
 }
 
 /* who was actually on the play */

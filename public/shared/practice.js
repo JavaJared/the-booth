@@ -5,7 +5,10 @@
 // exact call. All mutations are pure so the server can validate the same rules
 // the local season uses.
 import { OFF_BY_ID, DEF_BY_ID } from './playbook.js';
-import { ratingFromTraits } from './ratings.js';
+import {
+  ageDevelopmentMultiplier, developmentMultiplier, ratingFromTraits,
+  traitXpCost, withDevelopmentChange,
+} from './ratings.js';
 import { teamStrength } from './roster.js';
 
 export const PRACTICE_PERIODS = 3;
@@ -70,28 +73,35 @@ function repeatIndex(plan, selection) {
     && (p.drillId || p.callId) === (selection.drillId || selection.callId)).length;
 }
 
-const xpCost = (value) => Math.round(24 + Math.max(0, value - 60) * 0.55);
-const devMultiplier = (development) =>
-  development === 'quick' ? 1.25 : development === 'slow' ? 0.78 : 1;
-
-function trainGroup(roster, drillDef, rep) {
+function trainGroup(roster, drillDef, rep, season) {
   const side = drillDef.seat === 'OC' ? 'offense' : 'defense';
   const gain = (DRILL_XP[rep] || 1);
   const improvements = [];
   const list = roster[side].map((player) => {
-    if (!drillDef.positions.includes(player.pos) || !player.traits?.[drillDef.trait]) return player;
+    if (!drillDef.positions.includes(player.pos)
+      || !Number.isFinite(player.traits?.[drillDef.trait])) return player;
     const trainingXp = { ...(player.trainingXp || {}) };
+    const practiceLoad = { ...(player.practiceLoad || {}) };
     let value = player.traits[drillDef.trait];
-    let xp = (trainingXp[drillDef.trait] || 0) + gain * devMultiplier(player.development);
-    while (value < 99 && xp >= xpCost(value)) {
-      xp -= xpCost(value);
+    let xp = (trainingXp[drillDef.trait] || 0) + gain
+      * developmentMultiplier(player.development)
+      * ageDevelopmentMultiplier(player.age);
+    practiceLoad[drillDef.trait] = +(practiceLoad[drillDef.trait] || 0) + gain;
+    const from = value;
+    while (value < 99 && xp >= traitXpCost(value)) {
+      xp -= traitXpCost(value);
       value++;
       improvements.push({ name: player.name, pos: player.pos, trait: drillDef.trait, value });
     }
     trainingXp[drillDef.trait] = +xp.toFixed(2);
     const traits = { ...player.traits, [drillDef.trait]: value };
-    return { ...player, traits, trainingXp,
+    let next = { ...player, traits, trainingXp, practiceLoad,
       rating: ratingFromTraits(player.pos, traits, player.rating) };
+    if (value !== from) next = withDevelopmentChange(next, {
+      year: season.year, week: season.week, source: 'practice', trait: drillDef.trait,
+      from, to: value,
+    });
+    return next;
   });
   return { roster: { ...roster, [side]: list }, improvements };
 }
@@ -125,7 +135,8 @@ export function addPracticePeriod(season, seat, selection) {
   const rep = repeatIndex(plan, clean);
   let rosters = season.rosters, improvements = [];
   if (clean.type === 'drill') {
-    const trained = trainGroup(season.rosters[season.userTeam], DRILL_BY_ID[clean.drillId], rep);
+    const trained = trainGroup(
+      season.rosters[season.userTeam], DRILL_BY_ID[clean.drillId], rep, season);
     rosters = { ...season.rosters, [season.userTeam]: trained.roster };
     improvements = trained.improvements;
   }
@@ -146,7 +157,7 @@ export function addPracticePeriod(season, seat, selection) {
 
 export function practiceEffects(season, seat) {
   const plan = practicePlan(season, seat);
-  const traitBoosts = {}, plays = {};
+  const traitBoosts = {}, plays = {}, playReps = {};
   for (let i = 0; i < plan.length; i++) {
     const item = plan[i], rep = repeatIndex(plan.slice(0, i), item);
     if (item.type === 'drill') {
@@ -161,9 +172,10 @@ export function practiceEffects(season, seat) {
       if (!call) continue;
       const scale = call.custom ? [0.026, 0.017, 0.010] : [0.020, 0.012, 0.007];
       plays[item.callId] = (plays[item.callId] || 0) + (scale[rep] || 0.005);
+      playReps[item.callId] = (playReps[item.callId] || 0) + 1;
     }
   }
-  return { traitBoosts, plays };
+  return { traitBoosts, plays, playReps };
 }
 
 function boostSide(list, boosts) {

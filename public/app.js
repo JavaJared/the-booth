@@ -30,6 +30,7 @@ import {
   addPracticePeriod, PRACTICE_DRILLS, PRACTICE_PERIODS, DRILL_BY_ID,
   practiceEffects, practiceLabel, practiceLocked, practicePlan, practiceRemaining,
 } from './shared/practice.js';
+import { TRAITS, developmentTrajectory, traitXpCost } from './shared/ratings.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
 
@@ -2143,6 +2144,55 @@ function paneStandings(pane, S) {
    Both units, because a coordinator argues for his own side but has to know
    what the club as a whole is short of. */
 
+function playerCustomFits(S, side, player) {
+  const roster = S.rosters[S.userTeam][side];
+  const calls = side === 'offense' ? (S.customPlays || []) : (S.customDefenses || []);
+  const fit = side === 'offense' ? offensivePlayFit : defensivePlayFit;
+  return calls.map((call) => {
+    const result = fit(call, roster);
+    const row = result?.rows?.find((r) => r.player?.name === player.name);
+    return row ? { name: call.name, score: Math.round(row.score), role: row.role } : null;
+  }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 4);
+}
+
+function playerDevelopmentDetail(S, side, player) {
+  const detail = el('div', 'player-detail');
+  const effects = practiceEffects(S, side === 'offense' ? 'OC' : 'DC');
+  const boosts = effects.traitBoosts?.[player.pos] || {};
+  const traitRows = Object.entries(player.traits || {}).map(([key, value]) => {
+    const xp = player.trainingXp?.[key] || 0;
+    const cost = traitXpCost(value);
+    const boost = boosts[key] ? ` <b class="weekly-boost">+${boosts[key]} this week</b>` : '';
+    return [TRAITS[key] || key, `${value}${boost}`, `${Math.floor(xp)} / ${cost} XP`];
+  });
+  const changes = [...(player.developmentHistory || [])].reverse().slice(0, 6);
+  const changeRows = changes.map((c) => [
+    c.week ? `${c.year}, W${c.week}` : `${c.year} offseason`,
+    TRAITS[c.trait] || c.trait,
+    c.source === 'maintenance' ? 'Held through practice'
+      : `${c.from} → ${c.to} (${c.reason || c.source})`,
+  ]);
+  const fits = playerCustomFits(S, side, player);
+  detail.innerHTML = `
+    <div class="player-detail-grid">
+      <section><h5>Development trajectory</h5>
+        <p><b>${developmentTrajectory(player)}</b> · ${DEVELOPMENT_LABEL[player.development] || 'Normal'} learner</p>
+        <p class="scout-note">Playing time banks role-specific experience. Trained traits also resist age decline.</p>
+      </section>
+      <section><h5>Best custom-play fits</h5>${fits.length
+        ? table(['Play', 'Role', 'Fit'], fits.map((f) => [
+            escapeHtml(f.name), f.role || 'Execute', `${f.score}`]))
+        : note('No custom plays installed for this unit.')}</section>
+    </div>
+    <h5>Attribute development</h5>${traitRows.length
+      ? table(['Attribute', 'Rating', 'Toward next point'], traitRows)
+      : note('This legacy player does not have a position trait profile.')}
+    <h5>Recent changes</h5>${changeRows.length
+      ? table(['When', 'Attribute', 'Change'], changeRows)
+      : note('No recorded changes yet. New history begins with practice gains and the next offseason.')}`;
+  return detail;
+}
+
 function paneRoster(pane, S) {
   const mySide = app.seat === 'OC' ? 'offense' : 'defense';
   if (!ROS.side) ROS.side = mySide;
@@ -2192,6 +2242,8 @@ function paneRoster(pane, S) {
           : 'no counting stats')
         : `${p.tackles} tkl &middot; ${p.sacks} sk &middot; ${p.pbu} PBU &middot; ${p.ints} INT`;
       const row = el('div', 'depth-row' + (i === 0 ? ' is-starter' : ''));
+      const playerKey = `${side}:${p.name}`;
+      const expanded = ROS.expanded === playerKey;
       row.innerHTML = `
         <span class="slot">${i === 0 ? 'ST' : i + 1}</span>
         <span class="num">${p.number ?? ''}</span>
@@ -2199,8 +2251,14 @@ function paneRoster(pane, S) {
           <span>age ${p.age} &middot; ${DEVELOPMENT_LABEL[p.development] || 'Normal'} development</span>
           ${traits ? `<span class="player-traits">${traits}</span>` : ''}</span>
         <span class="rate ${p.rating >= 85 ? 'good' : p.rating < 65 ? 'bad' : ''}">${p.rating}</span>
-        <span class="line">${stat}</span>`;
+        <span class="line">${stat}</span>
+        <button class="player-expand" aria-expanded="${expanded}">${expanded ? 'Close' : 'Details'}</button>`;
+      row.querySelector('.player-expand').addEventListener('click', () => {
+        ROS.expanded = expanded ? null : playerKey;
+        renderSeason();
+      });
       grp.append(row);
+      if (expanded) grp.append(playerDevelopmentDetail(S, side, p));
     });
     box.append(grp);
   }
@@ -2220,7 +2278,7 @@ function paneRoster(pane, S) {
       : 'Nothing here grades below par, so the draft is about raising the ceiling rather than filling a hole.')));
 }
 
-const ROS = { side: null };
+const ROS = { side: null, expanded: null };
 
 /* ---------- awards ---------- */
 
@@ -2712,6 +2770,29 @@ const num = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
 
 const aggLabel = (v) => v <= -0.75 ? 'Ball control' : v < 0 ? 'Careful' : v === 0 ? 'Balanced' : v < 0.75 ? 'Attacking' : 'Reckless';
 
+function talentFeedback(p, outcome) {
+  const m = outcome.playerMatchup;
+  if (!m?.offense?.player || !m?.defense?.player || !m.decisive) return [];
+  const notes = [];
+  const a = m.decisive.offense, d = m.decisive.defense;
+  if (a && d && Number.isFinite(a.value) && Number.isFinite(d.value)) {
+    if (a.value >= d.value) {
+      notes.push(d.key === 'range'
+        ? `${m.defense.player} lacked the ${d.label.toLowerCase()} to stay with ${m.offense.player}.`
+        : `${m.offense.player}’s ${a.label.toLowerCase()} beat ${m.defense.player}’s ${d.label.toLowerCase()}.`);
+    } else {
+      notes.push(`${m.defense.player}’s ${d.label.toLowerCase()} took away ${m.offense.player}’s ${a.label.toLowerCase()}.`);
+    }
+  }
+  const call = OFF_BY_ID[p.offId], pressure = m.pressure;
+  if (DEF_BY_ID[p.defId]?.rush > 4 && call?.blitzFit >= 0.7 && pressure
+    && (outcome.sack || pressure.defense > pressure.offense)) {
+    notes.push(`The protection identified the blitz, but ${pressure.blocker || 'the line'} lost its matchup${
+      pressure.rusher ? ` to ${pressure.rusher}` : ''}.`);
+  }
+  return notes;
+}
+
 function renderFeed(g, plays) {
   const box = $('lastplay');
   // Everything from the snap you called through any kick the CPU took after it.
@@ -2754,16 +2835,12 @@ function renderFeed(g, plays) {
       if (designWon) row.append(el('div', 'tell', 'Your design created a clean schematic answer.'));
       else if (designLost) row.append(el('div', 'tell', 'Their design closed the space you attacked.'));
       if (Math.abs(o.practiceEdge || 0) >= 0.01) {
-        row.append(el('div', 'tell', 'The reps showed up — this call was practiced during the week.'));
+        const reps = o.practiceReps || 1;
+        row.append(el('div', 'tell', `${reps} practice period${reps === 1 ? '' : 's'} on ${
+          escapeHtml(ours ? off : def)} added +${Math.abs(o.practiceEdge).toFixed(3)} execution edge.`));
       }
-      if (Math.abs(o.talent || 0) >= 0.035 && o.playerMatchup?.offense && o.playerMatchup?.defense) {
-        const m = o.playerMatchup;
-        const offenseWon = o.talent > 0;
-        const winner = offenseWon ? m.offense : m.defense;
-        const loser = offenseWon ? m.defense : m.offense;
-        row.append(el('div', 'tell', `${escapeHtml(winner.player)} (${winner.score}) won the `
-          + `${m.label.toLowerCase()} matchup against ${escapeHtml(loser.player)} (${loser.score}).`));
-      }
+      if (Math.abs(o.talent || 0) >= 0.025) talentFeedback(p, o)
+        .forEach((message) => row.append(el('div', 'tell', escapeHtml(message))));
       if (o.predictionHit) row.append(el('div', 'tell', `Read confirmed: ${o.predictionActual}. +1 film point.`));
       box.append(row);
     });

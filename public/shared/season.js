@@ -9,7 +9,7 @@ import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls } from './playbook.js';
-import { playerLinesFromPlays, simPlayerLines } from './depth.js';
+import { playerLinesFromPlays, playerSeasonTotals, simPlayerLines } from './depth.js';
 import { seasonAwards, staffHonours } from './awards.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
   scout, scoutReport, ROUNDS, SCOUT_POINTS, ADVOCACY, BOARD_MAX } from './draft.js';
@@ -857,8 +857,15 @@ export function nextSeason(season, seats = ['OC', 'DC']) {
   const career = archiveSeason(season, seats);
   const ids = TEAMS.map((t) => t.id);
   // Everyone gets a year older, and the rosters you built carry forward.
-  const rosters = Object.fromEntries(ids.map((id) =>
-    [id, ageRoster(season.rosters[id], season.seed, season.year)]));
+  const rosters = Object.fromEntries(ids.map((id) => {
+    const experience = {
+      _teamGames: season.results.filter((r) => r.final && (r.home === id || r.away === id)).length,
+      _detailed: id === season.userTeam,
+    };
+    if (id === season.userTeam) Object.assign(experience,
+      playerSeasonTotals(season, 'offense'), playerSeasonTotals(season, 'defense'));
+    return [id, ageRoster(season.rosters[id], season.seed, season.year, experience)];
+  }));
   return hydrate({
     seed: `${season.seed}-${season.year + 1}`,
     year: season.year + 1,

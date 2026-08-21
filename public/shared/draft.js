@@ -14,6 +14,7 @@ import { OFF_SPOTS, DEF_SPOTS } from './roster.js';
 import { TEAMS, sortedStandings } from './league.js';
 import {
   TRAITS, POSITION_TRAITS, grade, ratingFromTraits, traitsFromRating, developmentFromRng,
+  ageDevelopmentMultiplier, developmentMultiplier, traitXpCost, withDevelopmentChange,
 } from './ratings.js';
 
 export { TRAITS, POSITION_TRAITS } from './ratings.js';
@@ -362,30 +363,104 @@ export function cpuPick(available, roster, rng) {
 
 /* ------------------------------------------------------------ progression */
 
-export function ageRoster(roster, seed, year) {
+const EXPERIENCE_FOCUS = {
+  QB: { acc: 1, field: 0.90, poise: 0.78, arm: 0.48 },
+  RB: { burst: 1, agility: 0.92, power: 0.78, hands: 0.58, speed: 0.35 },
+  WR: { route: 1, release: 0.88, hands: 0.78, burst: 0.48, speed: 0.30 },
+  TE: { block: 1, route: 0.82, hands: 0.76, frame: 0.30, speed: 0.26 },
+  OL: { block: 1, anchor: 0.94, pull: 0.58, motor: 0.45, frame: 0.25 },
+  EDGE: { rush: 1, shed: 0.86, burst: 0.70, motor: 0.56, frame: 0.24 },
+  DT: { shed: 1, power: 0.92, anchor: 0.84, motor: 0.48, frame: 0.24 },
+  LB: { instinct: 1, tackle: 0.92, cover: 0.72, shed: 0.52, speed: 0.28 },
+  CB: { cover: 1, instinct: 0.82, press: 0.72, agility: 0.58, speed: 0.30 },
+  NB: { cover: 1, instinct: 0.88, agility: 0.72, tackle: 0.56, speed: 0.30 },
+  S: { instinct: 1, range: 0.90, cover: 0.72, tackle: 0.62, speed: 0.28 },
+};
+
+const isStarter = (player) => [...OFF_SPOTS, ...DEF_SPOTS]
+  .some((spot) => spot.id === player.spot && spot.key);
+
+/** Age one roster while converting a season of real playing time into slow,
+ * assignment-specific growth. The optional experience map is keyed by name
+ * and may contain `_teamGames` for positions without counting stats (OL). */
+export function ageRoster(roster, seed, year, experience = {}) {
+  const detailed = experience._detailed !== false;
   const step = (list) => list.map((p) => {
     const age = (p.age || 26) + 1;
     // Ageing runs after the draft, so the flag cannot simply be stripped here
     // or it would clear the class that just arrived. Stamp the year instead
     // and let the roster page decide who still counts as a rookie.
     const rest = p;
-    const mean = age <= 24 ? 2.0 : age <= 27 ? 0.5 : age <= 30 ? -0.9 : -3.1;
-    const sd = age <= 24 ? 2.0 : age <= 30 ? 1.8 : 2.2;
-    const dev = p.development === 'quick' ? 1.30 : p.development === 'slow' ? 0.72 : 1;
     const baseTraits = p.traits || traitsFromRating(p.pos, p.rating,
       mulberry32(hashSeed(`${seed}:age-migrate:${year}:${p.name}`)));
     if (!baseTraits) {
       const rng = mulberry32(hashSeed(`${seed}:age:${year}:${p.name}:overall`));
-      const delta = gauss(rng, mean > 0 ? mean * dev : mean, sd);
+      const mean = age <= 24 ? 1.2 : age <= 29 ? 0 : age <= 32 ? -0.7 : -2.1;
+      const delta = gauss(rng, mean, 1.2);
       return { ...rest, age, development: p.development || 'normal',
         rating: Math.round(clamp(p.rating + delta, 45, 99)) };
     }
-    const traits = Object.fromEntries(Object.entries(baseTraits).map(([key, value]) => {
+    if (!detailed) {
+      const mean = age <= 24 ? 1.15 : age <= 27 ? 0.38 : age <= 30 ? -0.25
+        : age <= 33 ? -0.9 : -2.05;
+      const dev = developmentMultiplier(p.development);
+      const traits = Object.fromEntries(Object.entries(baseTraits).map(([key, value]) => {
+        const rng = mulberry32(hashSeed(`${seed}:age:${year}:${p.name}:${key}`));
+        const delta = gauss(rng, mean > 0 ? mean * dev : mean, age <= 30 ? 1.05 : 1.35);
+        return [key, Math.round(clamp(value + delta, 35, 99))];
+      }));
+      const { trainingXp, practiceLoad, developmentHistory, ...compact } = rest;
+      return { ...compact, age, traits, development: p.development || 'normal',
+        rating: ratingFromTraits(p.pos, traits, p.rating) };
+    }
+    const stats = experience[p.name] || {};
+    const teamGames = experience._teamGames || stats.games || 0;
+    const games = Math.min(teamGames, stats.games || (isStarter(p) ? teamGames : teamGames * 0.24));
+    const ageRate = ageDevelopmentMultiplier(age);
+    const devRate = developmentMultiplier(p.development);
+    const focus = EXPERIENCE_FOCUS[p.pos] || {};
+    const trainingXp = { ...(p.trainingXp || {}) };
+    const practiceLoad = p.practiceLoad || {};
+    const traits = { ...baseTraits };
+    let next = { ...rest, age, development: p.development || 'normal' };
+
+    for (const [key, original] of Object.entries(baseTraits)) {
       const rng = mulberry32(hashSeed(`${seed}:age:${year}:${p.name}:${key}`));
-      const delta = gauss(rng, mean > 0 ? mean * dev : mean, sd);
-      return [key, Math.round(clamp(value + delta, 35, 99))];
-    }));
-    return { ...rest, age, traits, development: p.development || 'normal',
+      let value = original;
+      // Experience accumulates instead of immediately moving an overall. A
+      // veteran earns less and a 90 trait costs much more than a 60 trait.
+      const repXp = games * 0.24 * (focus[key] || 0.25) * ageRate * devRate;
+      // Young-player potential is also banked as XP, independently per trait.
+      const potentialXp = age <= 27
+        ? Math.max(0, gauss(rng, age <= 23 ? 25 : age <= 25 ? 16 : 8,
+            age <= 23 ? 8 : age <= 25 ? 6 : 4)) * devRate
+        : 0;
+      let xp = (trainingXp[key] || 0) + repXp + potentialXp;
+      while (value < 99 && xp >= traitXpCost(value)) {
+        xp -= traitXpCost(value);
+        value++;
+      }
+
+      // Decline is trait-specific. Work on that exact ability can prevent the
+      // loss, which lets an older player maintain without becoming younger.
+      const declineMean = age <= 29 ? 0 : age <= 32 ? 0.42 : age <= 34 ? 0.92 : 1.55;
+      const declineRoll = declineMean ? Math.max(0, Math.round(gauss(rng, declineMean, 0.72))) : 0;
+      const maintenance = Math.min(declineRoll, Math.floor((practiceLoad[key] || 0) / 6));
+      const decline = declineRoll - maintenance;
+      value = Math.round(clamp(value - decline, 35, 99));
+      traits[key] = value;
+      trainingXp[key] = +xp.toFixed(2);
+
+      if (value !== original) next = withDevelopmentChange(next, {
+        year, source: 'offseason', trait: key, from: original, to: value,
+        reason: value > original ? 'experience' : 'age',
+      });
+      else if (maintenance) next = withDevelopmentChange(next, {
+        year, source: 'maintenance', trait: key, from: original, to: value,
+        reason: 'practice prevented decline',
+      });
+    }
+    return { ...next, traits, trainingXp, practiceLoad: {},
       rating: ratingFromTraits(p.pos, traits, p.rating) };
   });
   return { offense: step(roster.offense), defense: step(roster.defense) };

@@ -77,6 +77,44 @@ export const developmentFromRng = (rng) => {
 
 export const DEVELOPMENT_LABEL = { quick: 'Quick', normal: 'Normal', slow: 'Slow' };
 
+export const developmentMultiplier = (development) =>
+  development === 'quick' ? 1.25 : development === 'slow' ? 0.78 : 1;
+
+/** Physical learning curve. Young players bank more from every meaningful
+ * rep; veterans still learn, but practice is increasingly about maintenance. */
+export const ageDevelopmentMultiplier = (age = 26) => {
+  if (age <= 22) return 1.38;
+  if (age <= 24) return 1.22;
+  if (age <= 27) return 1;
+  if (age <= 30) return 0.76;
+  if (age <= 33) return 0.48;
+  return 0.28;
+};
+
+/** Each point is harder than the last, particularly once a trait is already
+ * NFL-calibre. Shared by weekly work and offseason experience conversion. */
+export const traitXpCost = (value) =>
+  Math.round(22 + Math.max(0, value - 55) * 0.68 + Math.max(0, value - 82) * 0.9);
+
+export function developmentTrajectory(player) {
+  const age = player?.age ?? 26;
+  const dev = player?.development || 'normal';
+  if (age <= 23) return dev === 'quick' ? 'Rapid ascent' : 'Ascending';
+  if (age <= 27) return dev === 'slow' ? 'Gradual growth' : 'Prime development';
+  if (age <= 30) return 'Prime plateau';
+  if (age <= 33) return 'Maintenance phase';
+  return 'Decline risk';
+}
+
+/** Keep the latest explainable changes without allowing a long career to
+ * bloat a Firestore season document. */
+export function withDevelopmentChange(player, change) {
+  return {
+    ...player,
+    developmentHistory: [...(player.developmentHistory || []), change].slice(-16),
+  };
+}
+
 export function traitValue(player, key) {
   return Number.isFinite(player?.traits?.[key]) ? player.traits[key] : (player?.rating || 75);
 }
