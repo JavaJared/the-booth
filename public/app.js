@@ -31,6 +31,7 @@ import {
   practiceEffects, practiceLabel, practiceLocked, practicePlan, practiceRemaining,
 } from './shared/practice.js';
 import { TRAITS, developmentTrajectory, traitXpCost } from './shared/ratings.js';
+import { normalizeInviteCode } from './shared/codes.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
 
@@ -183,7 +184,13 @@ class FirebaseTransport {
     );
   }
   async create(opts) { const r = await this.fn('createGame')(opts); this.mySeat = r.data.seat; this.watch(r.data.gameId); return r.data; }
-  async join(gameId, displayName) { const r = await this.fn('joinGame')({ gameId, displayName }); this.mySeat = r.data.seat; this.watch(gameId); return r.data; }
+  async join(gameId, displayName) {
+    gameId = normalizeInviteCode(gameId);
+    const r = await this.fn('joinGame')({ gameId, displayName });
+    this.mySeat = r.data.seat;
+    this.watch(gameId);
+    return r.data;
+  }
   async ready(ready) { return this.fn('setReady')({ gameId: this.gameId, ready }); }
   async call({ callId, special, auto, conversion, timeout }) {
     const response = await this.fn('submitCall')({ gameId: this.gameId, playIndex: this.game.state.playIndex,
@@ -261,7 +268,7 @@ $('btn-create').addEventListener('click', async () => {
 
 $('btn-join').addEventListener('click', async () => {
   setupErr('');
-  const code = $('join-code').value.trim();
+  const code = normalizeInviteCode($('join-code').value);
   if (!code) return setupErr('Enter the game code your rival sent you.');
   try {
     const fb = await connectFirebase();
@@ -285,7 +292,7 @@ $('btn-join').addEventListener('click', async () => {
 
 $('btn-guest-join').addEventListener('click', async () => {
   guestErr('');
-  const code = $('guest-join-code').value.trim();
+  const code = normalizeInviteCode($('guest-join-code').value);
   if (!code) return guestErr('Enter the exhibition code your rival sent you.');
   try {
     const fb = await connectFirebase({ anonymous: true });
@@ -1370,6 +1377,16 @@ $('btn-home').addEventListener('click', async () => {
   await refreshSeasonSlots();
 });
 
+$('season-code').addEventListener('click', async () => {
+  if (!app.seasonId) return flash('This device-only season does not have a share code.');
+  try {
+    await navigator.clipboard.writeText(app.seasonId);
+    flash(`Season code ${app.seasonId} copied.`);
+  } catch {
+    flash(`Season code: ${app.seasonId}`);
+  }
+});
+
 $('btn-season').addEventListener('click', () => pickTeam());
 
 function pickTeam() {
@@ -1440,6 +1457,10 @@ function renderSeason() {
   $('week-label').textContent = weekLabel(S.week);
   $('season-year').textContent = S.year;
   $('my-seat').textContent = app.seat === 'OC' ? 'Offense' : 'Defense';
+  const code = app.seasonId || 'LOCAL';
+  $('season-code-value').textContent = code;
+  $('season-code').classList.toggle('is-long', code.length > 4);
+  $('season-code').disabled = !app.seasonId;
   const tab = document.querySelector('.season-tabs .tab.is-on')?.dataset.stab || 'week';
   const pane = $('season-pane');
   pane.innerHTML = '';

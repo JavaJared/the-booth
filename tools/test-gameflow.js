@@ -9,6 +9,7 @@ import {
 } from '../public/shared/playbook.js';
 import { derivePlay, deriveDefense } from '../public/shared/designer.js';
 import { spatialMatchup } from '../public/shared/spatial.js';
+import { INVITE_ALPHABET, inviteCode, normalizeInviteCode } from '../public/shared/codes.js';
 import {
   createSeason,
   dehydrate,
@@ -37,6 +38,16 @@ import {
   addPracticePeriod, practiceEffects, practiceLocked, practicePlan,
   practiceRemaining, practicedRoster, practicedStrength,
 } from '../public/shared/practice.js';
+
+const fixedInvite = inviteCode(Uint8Array.from([0, 1, 31, 32]));
+assert.equal(fixedInvite, `AB${INVITE_ALPHABET[31]}A`,
+  'invitation codes should contain exactly four unambiguous characters');
+assert.match(fixedInvite, /^[A-HJ-NP-Z2-9]{4}$/,
+  'invitation codes should exclude characters commonly confused in handwriting');
+assert.equal(normalizeInviteCode(' ab2z '), 'AB2Z',
+  'new four-character invitation codes should be case-insensitive');
+assert.equal(normalizeInviteCode('Wp2NXrknSaTLRVATd12d'), 'Wp2NXrknSaTLRVATd12d',
+  'legacy Firestore invitation ids must retain their case exactly');
 
 function gameAtCpuGoalLine() {
   return {

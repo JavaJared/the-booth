@@ -133,8 +133,8 @@ input:focus{outline:none;border-bottom-color:var(--pencil);border-bottom-width:2
 .setup-actions{display:grid;gap:.6rem;margin-bottom:.4rem}
 .setup-actions .btn-primary{width:100%}
 .join-row{display:flex;gap:.5rem;align-items:flex-end}
-/* a game code is 20 random characters — handwriting is the wrong tool */
-.join-row input{flex:1;font-family:var(--mono);font-size:.92rem;letter-spacing:.01em}
+/* invitation codes are short, uppercase, and meant to be read aloud */
+.join-row input{flex:1;font-family:var(--mono);font-size:.98rem;letter-spacing:.08em;text-transform:uppercase}
 .err{color:var(--pencil);font-family:var(--hand);font-size:1.05rem;min-height:1.4em;margin:.6rem 0 0}
 .code{font-family:var(--mono);font-size:1.35rem;letter-spacing:.02em;
   margin:0 0 .7rem;word-break:break-all}
@@ -437,6 +437,16 @@ table.scout td:first-child{max-width:13rem}
 .seat-badge{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
   font-size:.66rem;font-weight:600;color:var(--board);background:var(--led);
   padding:.2rem .55rem;border-radius:2px;flex:none}
+.season-code-strip{display:flex;align-items:center;justify-content:flex-end;gap:.45rem;
+  max-width:60rem;margin:0 auto;padding:0 clamp(.7rem,2vw,1.1rem) .35rem;color:var(--led-dim);
+  font-family:var(--cond);font-size:.58rem;text-transform:uppercase;letter-spacing:.12em}
+.season-code-strip button{display:flex;align-items:baseline;gap:.45rem;border:1px solid var(--led-dim);
+  border-radius:2px;background:transparent;color:var(--led-white);padding:.14rem .38rem;cursor:pointer}
+.season-code-strip button:disabled{cursor:default;opacity:.65}
+.season-code-strip b{font-family:var(--led-face);font-size:1rem;letter-spacing:.16em;color:var(--led)}
+.season-code-strip small{font-family:var(--cond);font-size:.52rem;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--led-dim)}
+.season-code-strip button.is-long b{font-size:.7rem;letter-spacing:.04em}
 .season-tabs{max-width:60rem;margin:0 auto;padding:0 clamp(.7rem,2vw,1.1rem)}
 .season-tabs .tab{color:var(--led-dim)}
 .season-tabs .tab:hover{color:var(--led-white)}

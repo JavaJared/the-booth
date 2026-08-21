@@ -5,6 +5,7 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
+import { randomBytes } from 'node:crypto';
 
 import { newGameState, emptyTendencies } from '../../public/shared/engine.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from '../../public/shared/gameflow.js';
@@ -19,6 +20,7 @@ import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
 import { addPracticePeriod } from '../../public/shared/practice.js';
+import { inviteCode, normalizeInviteCode } from '../../public/shared/codes.js';
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -70,6 +72,24 @@ const seatsIn = (doc) => ['OC', 'DC'].filter((s) => doc.seats?.[s]);
 const MAX_SEASON_SLOTS = 5;
 const BUILT_IN_CALL_IDS = new Set([...Object.keys(OFF_BY_ID), ...Object.keys(DEF_BY_ID)]);
 const seasonCallCache = new Map();
+
+const alreadyExists = (error) => error?.code === 6 || error?.code === 'already-exists'
+  || /already exists/i.test(error?.message || '');
+
+/** Reserve a short document id atomically. `create`/`batch.create` makes a
+ * collision retry safe even when two requests choose the same code together. */
+async function createInviteDocument(collectionName, write) {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const ref = store().collection(collectionName).doc(inviteCode(randomBytes(4)));
+    try {
+      await write(ref);
+      return ref;
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
+    }
+  }
+  throw new ApiError(503, 'Could not reserve an invitation code. Try again.');
+}
 
 function cacheSeasonCalls(seasonId, season) {
   const calls = {
@@ -213,28 +233,29 @@ const actions = {
     }
     const hydrated = hydrate(clean);
     const { board, draftSeed, ...publicSeason } = hydrated;
-    const ref = seasonRef(store().collection('seasons').doc().id);
     const seatDoc = { uid, displayName: String(displayName || 'Coordinator').slice(0, 60) };
-    const batch = store().batch();
-    batch.set(ref, {
-      ...dehydrate(publicSeason),
-      ...(Array.isArray(board) ? boardViews(board, [seat]) : {}),
-      id: ref.id,
-      createdAt: FieldValue.serverTimestamp(),
-      importedAt: FieldValue.serverTimestamp(),
-      legacyImportId: importId,
-      slotName: String(slotName || '').trim().slice(0, 40)
-        || `${TEAM_BY_ID[clean.userTeam].name} career (imported)`,
-      archivedUids: [],
-      seats: { [seat]: seatDoc },
-      uids: [uid],
-      vote: { OC: null, DC: null },
-      currentGameId: null,
+    const ref = await createInviteDocument('seasons', async (candidate) => {
+      const batch = store().batch();
+      batch.create(candidate, {
+        ...dehydrate(publicSeason),
+        ...(Array.isArray(board) ? boardViews(board, [seat]) : {}),
+        id: candidate.id,
+        createdAt: FieldValue.serverTimestamp(),
+        importedAt: FieldValue.serverTimestamp(),
+        legacyImportId: importId,
+        slotName: String(slotName || '').trim().slice(0, 40)
+          || `${TEAM_BY_ID[clean.userTeam].name} career (imported)`,
+        archivedUids: [],
+        seats: { [seat]: seatDoc },
+        uids: [uid],
+        vote: { OC: null, DC: null },
+        currentGameId: null,
+      });
+      if (Array.isArray(board)) {
+        batch.create(privateRef(candidate.id), { board, draftSeed: draftSeed || null });
+      }
+      await batch.commit();
     });
-    if (Array.isArray(board)) {
-      batch.set(privateRef(ref.id), { board, draftSeed: draftSeed || null });
-    }
-    await batch.commit();
     return { seasonId: ref.id, seat, alreadyImported: false };
   },
 
@@ -246,10 +267,9 @@ const actions = {
     }
     const seed = Math.random().toString(36).slice(2, 10);
     const base = dehydrate(createSeason({ seed, userTeam: teamId }));
-    const ref = seasonRef(store().collection('seasons').doc().id);
-    await ref.set({
+    const ref = await createInviteDocument('seasons', (candidate) => candidate.create({
       ...base,
-      id: ref.id,
+      id: candidate.id,
       createdAt: FieldValue.serverTimestamp(),
       slotName: String(slotName || '').trim().slice(0, 40)
         || `${TEAM_BY_ID[teamId].name} career`,
@@ -258,11 +278,12 @@ const actions = {
       uids: [uid],
       vote: { OC: null, DC: null },
       currentGameId: null,
-    });
+    }));
     return { seasonId: ref.id, seat };
   },
 
   async joinSeason(uid, { seasonId, displayName = 'Coordinator' }) {
+    seasonId = normalizeInviteCode(seasonId);
     const current = await seasonRef(seasonId).get();
     if (!current.exists) throw new ApiError(404, 'No season with that code.');
     const currentData = current.data();
@@ -616,9 +637,8 @@ const actions = {
   async createGame(uid, { seat = 'OC', displayName = 'Coordinator',
     teamName = 'Cascade', oppName = 'Ironworks' }) {
     if (!['OC', 'DC'].includes(seat)) bad('Pick OC or DC.');
-    const ref = gameRef(store().collection('games').doc().id);
-    await ref.set({
-      id: ref.id,
+    const ref = await createInviteDocument('games', (candidate) => candidate.create({
+      id: candidate.id,
       status: 'lobby',
       rosterSeed: Math.random().toString(36).slice(2, 12),
       createdAt: FieldValue.serverTimestamp(),
@@ -632,11 +652,12 @@ const actions = {
       pending: { playIndex: 0, deadline: null, prediction: null, hint: null },
       pause: { state: 'none' },
       chirps: [],
-    });
+    }));
     return { gameId: ref.id, seat };
   },
 
   async joinGame(uid, { gameId, displayName = 'Coordinator' }) {
+    gameId = normalizeInviteCode(gameId);
     return store().runTransaction(async (tx) => {
       const ref = gameRef(gameId);
       const snap = await tx.get(ref);
