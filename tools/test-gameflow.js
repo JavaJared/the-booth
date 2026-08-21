@@ -179,6 +179,21 @@ assert.equal(unlockedFilm.filmBank.DC,
   detailedFilm.filmBank.DC - FILM_OVERLAY_COST,
   'unlocking an opponent diagram should spend the configured film cost');
 
+// The designer exposes the upcoming opponent's complete stock playbook, not
+// only calls which happened to appear in the finite tendency sample.
+const designerFilm = createSeason({ seed: 'designer-film', userTeam: filmUs });
+designerFilm.filmBank.DC = FILM_OVERLAY_COST;
+const designerGame = designerFilm.schedule.games.find((g) => g.home === filmUs || g.away === filmUs);
+designerFilm.week = designerGame.week;
+const designerOpponent = designerGame.home === filmUs ? designerGame.away : designerGame.home;
+const unseenCall = OFFENSE.find((p) => !p.custom
+  && !Object.values(designerFilm.filmBook?.[designerOpponent]?.offense || {})
+    .some((calls) => calls?.[p.id]));
+assert.ok(unseenCall, 'fixture should include an unobserved built-in opponent call');
+const designerUnlock = unlockFilmOverlay(designerFilm, 'DC', designerOpponent, unseenCall.id);
+assert.equal(designerUnlock.filmOverlays.DC.includes(`${designerOpponent}:${unseenCall.id}`), true,
+  'the upcoming opponent\'s default calls should unlock directly from the designer');
+
 for (const play of OFFENSE.filter((p) => !p.custom)) {
   assert.ok(Object.keys(opponentDiagram(play.id)?.paths || {}).length,
     `${play.name} should have an opponent-film diagram`);

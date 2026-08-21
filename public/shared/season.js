@@ -8,7 +8,7 @@ import { makeLeagueRosters, teamStrength, migrateRoster, needsMigration } from '
 import { simGame, seasonUnitStats, unitRanks } from './fastsim.js';
 import { mulberry32, hashSeed } from './engine.js';
 import { isSuccess } from './scout.js';
-import { registerSeasonCalls } from './playbook.js';
+import { OFF_BY_ID, registerSeasonCalls } from './playbook.js';
 import { playerLinesFromPlays, simPlayerLines } from './depth.js';
 import { seasonAwards, staffHonours } from './awards.js';
 import { makeClass, makeFreeAgents, draftOrder, cpuPick, makePick, addToRoster, ageRoster,
@@ -173,9 +173,20 @@ export function recordGameFilm(season, plays, cfg, earned = {}) {
   };
 }
 
+/** A scouted call is always eligible. The upcoming opponent's complete built-in
+    menu is also available from the designer, even before that call appears in
+    the tendency sample. */
+export function filmOverlayAvailable(season, teamId, callId) {
+  const play = OFF_BY_ID[callId];
+  if (!play || play.custom) return false;
+  const game = userGame(season);
+  const upcoming = game && (game.home === season.userTeam ? game.away : game.home);
+  return hasCall(season.filmBook, teamId, 'offense', callId) || upcoming === teamId;
+}
+
 /** Buy permanent access to one opponent concept in the defensive designer. */
 export function unlockFilmOverlay(season, seat, teamId, callId) {
-  if (seat !== 'DC' || !hasCall(season.filmBook, teamId, 'offense', callId)) return season;
+  if (seat !== 'DC' || !filmOverlayAvailable(season, teamId, callId)) return season;
   const key = `${teamId}:${callId}`;
   const unlocked = season.filmOverlays?.[seat] || [];
   if (unlocked.includes(key)) return season;

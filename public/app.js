@@ -572,7 +572,7 @@ function show(id) {
 
 const DZ = { mode: 'pass', pers: '11', sel: null, routes: {}, pa: false,
   carrier: [], carrierSpot: 'RB1', blocks: {}, blockers: [], dpos: {}, paths: {}, man: false,
-  overlay: null };
+  overlay: null, filmCallId: '' };
 const DZ_W = 60, DZ_H = 46, DZ_LOS = 34;          // viewBox units
 const fx = (x) => 3 + (x / FIELD_W) * (DZ_W - 6);  // field x -> svg x
 const fy = (y) => DZ_LOS - y * 0.95;               // yards downfield -> svg y
@@ -584,6 +584,49 @@ function designerModes() {
   return app.seat === 'DC'
     ? [['def', 'Defensive call']]
     : [['pass', 'Pass concept'], ['run', 'Run play']];
+}
+
+function designerFilmContext() {
+  if (DZ.mode !== 'def' || app.seat !== 'DC' || !app.season) return null;
+  const game = userGame(app.season);
+  if (!game) return null;
+  const teamId = game.home === app.season.userTeam ? game.away : game.home;
+  return { teamId, name: fullName(teamId) };
+}
+
+function renderDesignerFilmControls() {
+  const box = $('dz-film-controls');
+  const context = designerFilmContext();
+  box.hidden = !context;
+  if (!context) return;
+
+  const plays = OFFENSE.filter((p) => !p.custom && opponentDiagram(p.id));
+  const valid = new Set(plays.map((p) => p.id));
+  if (DZ.overlay?.teamId === context.teamId) DZ.filmCallId = DZ.overlay.callId;
+  if (!valid.has(DZ.filmCallId)) DZ.filmCallId = '';
+
+  $('dz-film-label').textContent = `${context.name} play overlay`;
+  $('dz-film-select').innerHTML = '<option value="">Select an opponent play</option>'
+    + [...new Set(plays.map((p) => p.family))].map((family) => {
+      const label = family === 'run' ? 'Runs' : family === 'quick' ? 'Quick game'
+        : family === 'screen' ? 'Screens' : family === 'dropback' ? 'Dropback passes'
+        : family === 'playaction' ? 'Play action' : 'Deep shots';
+      const options = plays.filter((p) => p.family === family).map((p) =>
+        `<option value="${p.id}">${p.name} &middot; ${p.pers} personnel</option>`).join('');
+      return `<optgroup label="${label}">${options}</optgroup>`;
+    }).join('');
+  $('dz-film-select').value = DZ.filmCallId;
+
+  const balance = app.season.filmBank?.DC || 0;
+  const unlocked = new Set(app.season.filmOverlays?.DC || []);
+  const key = DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
+  const owns = key && unlocked.has(key);
+  const action = $('dz-film-action');
+  action.textContent = !DZ.filmCallId ? 'Select a play'
+    : owns ? (DZ.overlay?.callId === DZ.filmCallId ? 'Overlay active' : 'Show overlay')
+      : `Unlock overlay · ${FILM_OVERLAY_COST} film`;
+  action.disabled = !DZ.filmCallId || (!owns && balance < FILM_OVERLAY_COST);
+  $('dz-film-balance').textContent = `${balance} film available`;
 }
 
 function openDesigner() {
@@ -615,6 +658,7 @@ function openDesigner() {
   sel.innerHTML = Object.entries(FORMATIONS)
     .map(([k, v]) => `<option value="${k}">${k} personnel &mdash; ${v.label}</option>`).join('');
   sel.value = DZ.pers;
+  renderDesignerFilmControls();
   show('designer');
   drawDesigner();
 }
@@ -909,7 +953,43 @@ $('dz-name').addEventListener('input', readDesigner);
 $('dz-overlay-clear').addEventListener('click', () => {
   DZ.overlay = null;
   $('dz-overlay-note').hidden = true;
+  renderDesignerFilmControls();
   drawDesigner();
+});
+$('dz-film-select').addEventListener('change', (e) => {
+  DZ.filmCallId = e.target.value;
+  const context = designerFilmContext();
+  const key = context && DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
+  const unlocked = new Set(app.season?.filmOverlays?.DC || []);
+  DZ.overlay = key && unlocked.has(key) ? { teamId: context.teamId, callId: DZ.filmCallId } : null;
+  renderDesignerFilmControls();
+  drawDesigner();
+});
+$('dz-film-action').addEventListener('click', async () => {
+  const button = $('dz-film-action');
+  const context = designerFilmContext();
+  const callId = DZ.filmCallId;
+  if (!context || !callId) return;
+  const key = `${context.teamId}:${callId}`;
+  const owns = (app.season.filmOverlays?.DC || []).includes(key);
+  if (!owns) {
+    button.disabled = true;
+    button.classList.add('is-pending');
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Studying…';
+    try {
+      await link.unlockFilm(context.teamId, callId);
+    } catch (e) {
+      flash(e.message || 'That did not work.');
+      renderDesignerFilmControls();
+      return;
+    } finally {
+      button.classList.remove('is-pending');
+      button.removeAttribute('aria-busy');
+    }
+  }
+  DZ.overlay = { teamId: context.teamId, callId };
+  openDesigner();
 });
 const activePaths = () => DZ.mode === 'def' ? DZ.paths
   : DZ.mode === 'run' ? (DZ.sel === DZ.carrierSpot ? null : DZ.blocks) : DZ.routes;
@@ -1093,7 +1173,19 @@ const link = {
       renderSeason();
       return;
     }
-    await api('unlockFilmOverlay', { seasonId: app.seasonId, teamId, callId });
+    const result = await api('unlockFilmOverlay', { seasonId: app.seasonId, teamId, callId });
+    // The Firestore listener remains authoritative, but reflecting the
+    // successful transaction immediately lets the designer reveal the overlay
+    // without waiting for the snapshot round trip.
+    app.season = {
+      ...app.season,
+      filmBank: { ...app.season.filmBank, [app.seat]: result.balance },
+      filmOverlays: {
+        ...app.season.filmOverlays,
+        [app.seat]: [...new Set([...(app.season.filmOverlays?.[app.seat] || []), result.key])],
+      },
+    };
+    return result;
   },
   async advocate(prospectId, amount) {
     if (this.local) { app.season = advocate(app.season, app.seat, prospectId, amount); renderSeason(); return; }
