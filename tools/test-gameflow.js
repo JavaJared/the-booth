@@ -13,6 +13,7 @@ import {
   createSeason,
   dehydrate,
   hydrate,
+  liveConfig,
   finishedGameRecorded,
   recordGameFilm,
   simRemainingWeek,
@@ -29,6 +30,10 @@ import { depthChart } from '../public/shared/depth.js';
 import {
   FILM_OVERLAY_COST, filmRows, opponentDiagram, opponentDefenseDiagram,
 } from '../public/shared/film.js';
+import {
+  addPracticePeriod, practiceEffects, practiceLocked, practicePlan,
+  practiceRemaining, practicedRoster, practicedStrength,
+} from '../public/shared/practice.js';
 
 function gameAtCpuGoalLine() {
   return {
@@ -198,6 +203,140 @@ assert.ok(fastSnaps.completions > routeSnaps.completions + 20,
   'assignment-specific traits should create a measurable live completion advantage');
 assert.equal(fastSnaps.matchup.label, 'Deep-route execution',
   'snap outcomes should explain which player assignment was evaluated');
+
+// Weekly practice belongs to one coordinator, carries three periods, and has
+// diminishing returns when the same work is repeated.
+let practiceSeason = createSeason({ seed: 'weekly-practice', userTeam: TEAMS[0].id });
+const permanentWr = practiceSeason.rosters[practiceSeason.userTeam].offense
+  .find((p) => p.spot === 'WR1');
+const permanentRoute = permanentWr.traits.route;
+practiceSeason = addPracticePeriod(practiceSeason, 'OC',
+  { type: 'drill', drillId: 'wr-route' }).season;
+assert.equal(practiceRemaining(practiceSeason, 'OC'), 2,
+  'a coordinator should begin with three weekly practice periods');
+assert.equal(practiceEffects(practiceSeason, 'OC').traitBoosts.WR.route, 3,
+  'the first position-drill period should provide its full weekly boost');
+practiceSeason = addPracticePeriod(practiceSeason, 'OC',
+  { type: 'drill', drillId: 'wr-route' }).season;
+assert.equal(practiceEffects(practiceSeason, 'OC').traitBoosts.WR.route, 5,
+  'a repeated drill should add a smaller second-period boost');
+practiceSeason = addPracticePeriod(practiceSeason, 'OC',
+  { type: 'drill', drillId: 'wr-route' }).season;
+assert.equal(practiceEffects(practiceSeason, 'OC').traitBoosts.WR.route, 6,
+  'a third repeated drill should have the smallest return');
+assert.throws(() => addPracticePeriod(practiceSeason, 'OC',
+  { type: 'play', callId: 'verts' }), /three practice periods/i,
+'a coordinator cannot exceed the weekly period budget');
+assert.throws(() => addPracticePeriod(createSeason({ seed: 'wrong-unit', userTeam: TEAMS[0].id }),
+  'DC', { type: 'drill', drillId: 'wr-route' }), /your unit/i,
+'a defensive coordinator cannot assign an offensive drill');
+const preparedWr = practicedRoster(practiceSeason).offense.find((p) => p.spot === 'WR1');
+assert.equal(preparedWr.traits.route, Math.min(99, permanentRoute + 6),
+  'drill ratings should be applied to a temporary game-week roster');
+assert.equal(practiceSeason.rosters[practiceSeason.userTeam].offense
+  .find((p) => p.spot === 'WR1').traits.route, permanentRoute,
+'the temporary weekly boost must not overwrite the permanent rating');
+assert.equal(practicePlan({ ...practiceSeason, week: practiceSeason.week + 1 }, 'OC').length, 0,
+  'weekly practice effects should expire when the calendar advances');
+
+// Repeated weekly work banks development XP and eventually raises the actual
+// trait, with overall recalculated from the new profile.
+let developmentSeason = createSeason({ seed: 'practice-development', userTeam: TEAMS[0].id });
+const developmentBefore = new Map(developmentSeason.rosters[developmentSeason.userTeam].offense
+  .filter((p) => p.pos === 'WR').map((p) => [p.name, p.traits.route]));
+for (let week = 1; week <= 5; week++) {
+  developmentSeason = { ...developmentSeason, week };
+  for (let period = 0; period < 3; period++) {
+    developmentSeason = addPracticePeriod(developmentSeason, 'OC',
+      { type: 'drill', drillId: 'wr-route' }).season;
+  }
+}
+const developedWrs = developmentSeason.rosters[developmentSeason.userTeam].offense
+  .filter((p) => p.pos === 'WR');
+assert.ok(developedWrs.some((p) => p.traits.route > developmentBefore.get(p.name)),
+  'banked drill experience should eventually improve permanent player traits');
+assert.ok(developedWrs.every((p) =>
+  p.rating === ratingFromTraits(p.pos, p.traits, p.rating)),
+'permanent practice gains should update the player overall');
+
+// Practicing a call affects that exact call and is frozen into liveConfig.
+let playPractice = createSeason({ seed: 'play-practice', userTeam: TEAMS[0].id });
+for (let period = 0; period < 3; period++) {
+  playPractice = addPracticePeriod(playPractice, 'OC',
+    { type: 'play', callId: 'verts' }).season;
+}
+assert.equal(+practiceEffects(playPractice, 'OC').plays.verts.toFixed(3), 0.039,
+  'three default-play periods should sum diminishing familiarity gains');
+assert.ok(practicedStrength(playPractice).off > playPractice.strength[playPractice.userTeam].off,
+  'rehearsed offensive calls should provide a modest expected-value benefit in fast simulation');
+const scheduledPracticeGame = playPractice.schedule.games.find((g) =>
+  g.home === playPractice.userTeam || g.away === playPractice.userTeam);
+if (scheduledPracticeGame.week !== playPractice.week) {
+  playPractice.week = scheduledPracticeGame.week;
+  // Reassign at the scheduled week because practice is keyed to the calendar.
+  for (let period = 0; period < 3; period++) {
+    playPractice = addPracticePeriod(playPractice, 'OC',
+      { type: 'play', callId: 'verts' }).season;
+  }
+}
+const practiceCfg = liveConfig(playPractice, scheduledPracticeGame);
+assert.equal(+practiceCfg.practice.OC.plays.verts.toFixed(3), 0.039,
+  'the live game configuration should freeze practiced-play familiarity');
+const basePracticeSnap = resolveSnap(newGameState({ firstPossession: 'US' }), 'verts', 'nick1',
+  mulberry32(hashSeed('practice-edge')), emptyTendencies(), {
+    offRoster: practiceCfg.rosters.US.offense, defRoster: practiceCfg.rosters.CPU.defense,
+  });
+const reppedPracticeSnap = resolveSnap(newGameState({ firstPossession: 'US' }), 'verts', 'nick1',
+  mulberry32(hashSeed('practice-edge')), emptyTendencies(), {
+    practiceEdge: practiceCfg.practice.OC.plays.verts,
+    offRoster: practiceCfg.rosters.US.offense, defRoster: practiceCfg.rosters.CPU.defense,
+  });
+assert.equal(+(reppedPracticeSnap.edge - basePracticeSnap.edge).toFixed(3), 0.039,
+  'play familiarity should add its exact bounded edge during snap resolution');
+assert.equal(reppedPracticeSnap.practiceEdge, 0.039,
+  'the outcome should expose practice impact for in-game feedback');
+const playedPractice = { ...playPractice, results: [{
+  week: playPractice.week, home: playPractice.userTeam, away: TEAMS[1].id, final: true,
+}] };
+assert.equal(practiceLocked(playedPractice), true,
+  'practice should lock after the current game has been completed');
+assert.throws(() => addPracticePeriod(playedPractice, 'OC',
+  { type: 'drill', drillId: 'qb-accuracy' }), /locked/i,
+'a completed game must not permit retroactive practice');
+const customPracticeCall = { ...OFF_BY_ID.verts, id: 'custom-practice-call', custom: true };
+registerCustomPlays([customPracticeCall]);
+let customPractice = createSeason({ seed: 'custom-practice', userTeam: TEAMS[0].id });
+assert.throws(() => addPracticePeriod(customPractice, 'OC',
+  { type: 'play', callId: customPracticeCall.id }), /not installed/i,
+'a custom call from another season cannot be practiced by guessing its id');
+customPractice.customPlays = [customPracticeCall];
+customPractice = addPracticePeriod(customPractice, 'OC',
+  { type: 'play', callId: customPracticeCall.id }).season;
+assert.equal(practiceEffects(customPractice, 'OC').plays[customPracticeCall.id], 0.026,
+  'complex custom calls should receive the larger first-period familiarity benefit');
+
+let defensivePractice = createSeason({ seed: 'defensive-practice', userTeam: TEAMS[0].id });
+const defensiveGame = defensivePractice.schedule.games.find((g) =>
+  g.home === defensivePractice.userTeam || g.away === defensivePractice.userTeam);
+defensivePractice.week = defensiveGame.week;
+defensivePractice = addPracticePeriod(defensivePractice, 'DC',
+  { type: 'play', callId: 'base3' }).season;
+const defensiveCfg = liveConfig(defensivePractice, defensiveGame);
+const defensivePracticeGame = {
+  state: newGameState({ firstPossession: 'CPU' }),
+  tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
+  filmPoints: { OC: 0, DC: 0 }, pending: {}, autoSeat: 'OC',
+  gameplan: { OC: { tempo: 'normal' }, DC: {} },
+  rosters: defensiveCfg.rosters, practice: defensiveCfg.practice,
+  seasonSeed: defensivePractice.seed, them: defensiveCfg.them,
+};
+const defensivePracticeSnap = runToNextDecision('defensive-practice-game',
+  defensivePracticeGame, { callId: 'base3' }).plays[0].outcome;
+assert.equal(defensivePracticeSnap.practiceEdge, -0.02,
+  'a practiced defensive call should apply its familiarity in the defense-favoring direction');
+assert.ok(practicedStrength(defensivePractice).def
+  > defensivePractice.strength[defensivePractice.userTeam].def,
+'rehearsed defensive calls should provide a modest expected-value benefit in fast simulation');
 const defense = statSeason.rosters[statSeason.userTeam].defense;
 const slotOrder = (a, b) => DEF_SPOTS.findIndex((s) => s.id === a)
   - DEF_SPOTS.findIndex((s) => s.id === b);

@@ -19,6 +19,7 @@ import {
   FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SIM_GRANT,
   filmFromPlays, hasCall, mergeFilmBooks, simulatedGameFilm, teamOffensiveIdentity,
 } from './film.js';
+import { practicedRoster, practicedStrength, practiceEffects } from './practice.js';
 
 export const REGULAR_WEEKS = 18;
 const ROUND_NAMES = { 19: 'Wild Card', 20: 'Divisional', 21: 'Conference Championship', 22: 'The Final' };
@@ -163,6 +164,7 @@ export function record(season, teamId = season.userTeam) {
 export function liveConfig(season, game) {
   const us = season.userTeam;
   const them = game.home === us ? game.away : game.home;
+  const prepared = practicedRoster(season);
   return {
     gameId: game.id,
     us, them,
@@ -171,7 +173,8 @@ export function liveConfig(season, game) {
     oppName: TEAM_BY_ID[them].name,
     usRecord: record(season, us),
     themRecord: record(season, them),
-    rosters: { US: season.rosters[us], CPU: season.rosters[them] },
+    rosters: { US: prepared, CPU: season.rosters[them] },
+    practice: { OC: practiceEffects(season, 'OC'), DC: practiceEffects(season, 'DC') },
     firstPossession: mulberry32(hashSeed(`${season.seed}:${game.id}:toss`))() < 0.5 ? 'US' : 'CPU',
     seasonSeed: season.seed,
     cpuIdentity: teamOffensiveIdentity(season.seed, them),
@@ -282,12 +285,14 @@ export function simRemainingWeek(season, week = season.week) {
     ? (season.playoffs?.games || []).filter((g) => g.week === week)
     : weekGames(season, week)).filter((g) => !done.has(g.id));
   const us = season.userTeam;
+  const prepared = practicedRoster(season);
+  const strength = { ...season.strength, [us]: practicedStrength(season) };
   let filmBook = season.filmBook || {};
   let lastGameFilm = season.lastGameFilm || null;
   let filmBank = { OC: 0, DC: 0, ...(season.filmBank || {}) };
   const fresh = pending.map((g) => {
     const r = {
-      ...simGame(g.id, g.home, g.away, season.strength, season.seed),
+      ...simGame(g.id, g.home, g.away, strength, season.seed),
       week,
       playoff: season.phase === 'playoffs',
     };
@@ -299,7 +304,7 @@ export function simRemainingWeek(season, week = season.week) {
     if (g.home === us || g.away === us) {
       const ours = g.home === us ? r.homeStats : r.awayStats;
       const theirs = g.home === us ? r.awayStats : r.homeStats;
-      r.players = simPlayerLines(season.rosters[us], ours, theirs,
+      r.players = simPlayerLines(prepared, ours, theirs,
         `${season.seed}:${g.id}`);
       lastGameFilm = {
         week,

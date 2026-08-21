@@ -122,6 +122,7 @@ export function computeEdge(off, def, ctx = {}) {
   const persEdge = (PERS_WEIGHT[off.pers] - DEF_PERS_WEIGHT[def.pers]) * 0.022;
   const readEdge = ctx.readEdge || 0;
   const planEdge = ctx.planEdge || 0;
+  const practiceEdge = ctx.practiceEdge || 0;
   const designEdge = ctx.spatialEdge ?? spatialMatchup(off, def).edge;
 
   if (off.family === 'run') {
@@ -129,7 +130,7 @@ export function computeEdge(off, def, ctx = {}) {
     const commit = -def.runCommit * 0.26 * off.boxFit;
     // Outside runs care less about box count, more about defensive width.
     const edgeRun = off.edge === 'outside' ? (def.pers === 'heavy' ? 0.05 : 0) : 0;
-    return boxEdge + commit + edgeRun + persEdge + readEdge + planEdge + designEdge;
+    return boxEdge + commit + edgeRun + persEdge + readEdge + planEdge + practiceEdge + designEdge;
   }
 
   const covEdge = off.vs[def.cov] || 0;
@@ -138,7 +139,7 @@ export function computeEdge(off, def, ctx = {}) {
   const pa = off.paBonus
     ? off.paBonus * (def.runCommit * 0.20 + (runEstablishment(ctx.tendencies) - 0.42) * 0.16)
     : 0;
-  return covEdge + blitzEdge + pa - persEdge * 0.5 + readEdge + planEdge + designEdge;
+  return covEdge + blitzEdge + pa - persEdge * 0.5 + readEdge + planEdge + practiceEdge + designEdge;
 }
 
 // Penalty the offense pays for being predictable, scaled by how far the
@@ -188,6 +189,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const readEdge = tendencyRead(off, def, tendencies, state);
   const planEdge = planEdgeFor(off, plans.offense);
+  const practiceEdge = plans.practiceEdge || 0;
   const design = spatialMatchup(off, def);
 
   // Who is actually on the field for this snap.
@@ -206,13 +208,14 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   const exactEdge = clamp(design.edge + targetDesignEdge, -0.11, 0.11);
   const edge = computeEdge(off, def, {
-    readEdge, planEdge, tendencies, spatialEdge: exactEdge,
+    readEdge, planEdge, practiceEdge, tendencies, spatialEdge: exactEdge,
   }) + talent;
 
   const base = {
     offId, defId, offName: off.name, defName: def.name,
     family: off.family, edge: +edge.toFixed(3), readEdge: +readEdge.toFixed(3),
     talent: +talent.toFixed(3), playerMatchup, designEdge: +exactEdge.toFixed(3),
+    practiceEdge: +practiceEdge.toFixed(3),
     yards: 0, turnover: null, complete: null, sack: false, touchdown: false,
     outOfBounds: false, clockStops: false, penalty: null,
   };

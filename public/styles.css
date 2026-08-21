@@ -638,6 +638,17 @@ table.scout s{color:var(--ink-3)}
 
 /* ---------- depth chart ---------- */
 .depth{display:grid;gap:.9rem;margin-bottom:1rem}
+.practice-choice{display:grid;grid-template-columns:minmax(12rem,1fr) auto;gap:.55rem .75rem;
+  align-items:end;background:var(--pad);border:1px solid var(--ink);padding:.75rem;margin-bottom:.8rem}
+.practice-choice h3{grid-column:1/-1;margin:0;font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.1em;font-size:.72rem}
+.practice-choice .scout-note{grid-column:1/2;margin:0;padding:0}
+.practice-select{width:100%;min-width:0;border:1px solid var(--ink);background:var(--paper);
+  color:var(--ink);font:inherit;padding:.42rem .5rem;border-radius:2px}
+@media (max-width:620px){
+  .practice-choice{grid-template-columns:1fr}
+  .practice-choice h3,.practice-choice .scout-note{grid-column:1}
+}
 .depth-group{background:var(--pad);border:1px solid var(--ink);border-radius:2px;overflow:hidden}
 .depth-group h4{margin:0;font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
   font-size:.63rem;font-weight:600;color:var(--paper);background:var(--ink);padding:.28rem .55rem}

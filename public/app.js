@@ -26,6 +26,10 @@ import {
   opponentDiagram, opponentDefenseDiagram,
 } from './shared/film.js';
 import { spatialMatchup } from './shared/spatial.js';
+import {
+  addPracticePeriod, PRACTICE_DRILLS, PRACTICE_PERIODS, DRILL_BY_ID,
+  practiceEffects, practiceLabel, practiceLocked, practicePlan, practiceRemaining,
+} from './shared/practice.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
 
@@ -65,12 +69,13 @@ class LocalTransport {
 
   async create({ name, seat, teamName = 'Cascade', oppName = 'Ironworks',
     usRecord, themRecord, rosters, firstPossession, autoSeat,
-    seasonSeed, cpuIdentity, us, them }) {
+    seasonSeed, cpuIdentity, practice, us, them }) {
     this.gameId = 'local-' + Math.random().toString(36).slice(2, 8);
     this.game = {
       id: this.gameId, status: 'live', teamName, oppName, usRecord, themRecord,
       rosterSeed: Math.random().toString(36).slice(2, 12),
       rosters,
+      practice,
       seasonSeed, cpuIdentity, us, them,
       autoSeat: autoSeat || null,
       seats: { OC: { displayName: 'Offense', ready: true }, DC: { displayName: 'Defense', ready: true } },
@@ -1253,6 +1258,16 @@ const link = {
     };
     return result;
   },
+  async practice(selection) {
+    if (this.local) {
+      const result = addPracticePeriod(app.season, app.seat, selection);
+      app.season = result.season;
+      saveSeason();
+      renderSeason();
+      return result;
+    }
+    return api('addPractice', { seasonId: app.seasonId, selection });
+  },
   async advocate(prospectId, amount) {
     if (this.local) { app.season = advocate(app.season, app.seat, prospectId, amount); renderSeason(); return; }
     await api('advocate', { seasonId: app.seasonId, prospectId, amount });
@@ -1428,7 +1443,8 @@ function renderSeason() {
   const pane = $('season-pane');
   pane.innerHTML = '';
   if ((S.phase === 'offseason' || S.phase === 'hired') && tab === 'week') paneOffseason(pane, S);
-  else ({ week: paneWeek, film: paneFilm, standings: paneStandings, roster: paneRoster,
+  else ({ week: paneWeek, film: paneFilm, practice: panePractice,
+    standings: paneStandings, roster: paneRoster,
     awards: paneAwards, resume: paneResume, bracket: paneBracket }[tab])(pane, S);
   saveSeason();
 }
@@ -1441,6 +1457,106 @@ document.querySelectorAll('.season-tabs .tab').forEach((t) => t.addEventListener
   });
   renderSeason();
 }));
+
+function panePractice(pane, S) {
+  const seat = app.seat;
+  const plan = practicePlan(S, seat);
+  const remaining = practiceRemaining(S, seat);
+  const effects = practiceEffects(S, seat);
+  const locked = practiceLocked(S) || !!app.seasonDoc?.currentGameId;
+  const unit = seat === 'OC' ? 'offense' : 'defense';
+
+  pane.append(card('Weekly practice', table(['', ''], [
+    ['Available periods', `${remaining} of ${PRACTICE_PERIODS}`],
+    ['Your unit', seat === 'OC' ? 'Offense' : 'Defense'],
+    ['Status', locked ? 'Locked for this week' : remaining ? 'Planning' : 'Plan complete'],
+  ]) + noteEl('Drill boosts last through this week’s game. Development experience carries forward and can permanently raise the trained trait.')));
+
+  const periodRows = plan.map((item, index) => [
+    `Period ${index + 1}`,
+    practiceLabel(item),
+    item.type === 'drill' ? 'Position drill' : 'Play installation',
+  ]);
+  pane.append(card('Practice script', periodRows.length
+    ? table(['', 'Work', 'Type'], periodRows)
+    : note('No periods have been assigned yet.')));
+
+  const boostRows = [];
+  const seenDrills = new Set();
+  for (const item of plan.filter((p) => p.type === 'drill')) {
+    if (seenDrills.has(item.drillId)) continue;
+    seenDrills.add(item.drillId);
+    const d = DRILL_BY_ID[item.drillId];
+    const value = d && effects.traitBoosts[d.positions[0]]?.[d.trait];
+    if (d && value) boostRows.push([d.group, d.label, `+${value} ${d.trait.toUpperCase()}`]);
+  }
+  for (const [callId, edge] of Object.entries(effects.plays)) {
+    const call = seat === 'OC' ? OFF_BY_ID[callId] : DEF_BY_ID[callId];
+    boostRows.push(['Play', call?.name || callId, `${edge >= 0 ? '+' : ''}${(edge * 100).toFixed(1)}% edge`]);
+  }
+  if (boostRows.length) pane.append(card('This week’s effect',
+    table(['Group', 'Focus', 'Game boost'], boostRows)
+    + noteEl('Repeating the same work helps, but each additional period has a smaller return.')));
+
+  if (locked || !remaining) {
+    if (locked) pane.append(card('Practice closed', note('The plan locks when the game begins or is simulated.')));
+    return;
+  }
+
+  const drills = PRACTICE_DRILLS.filter((d) => d.seat === seat);
+  const drillBox = el('section', 'practice-choice');
+  drillBox.innerHTML = '<h3>Run a position drill</h3>';
+  const drillSelect = el('select', 'practice-select');
+  let lastGroup = null, group = null;
+  for (const d of drills) {
+    if (d.group !== lastGroup) {
+      group = document.createElement('optgroup');
+      group.label = d.group;
+      drillSelect.append(group);
+      lastGroup = d.group;
+    }
+    const option = document.createElement('option');
+    option.value = d.id;
+    option.textContent = `${d.label} — ${d.trait.toUpperCase()}`;
+    group.append(option);
+  }
+  const drillNote = el('p', 'scout-note', drills[0]?.description || '');
+  drillSelect.addEventListener('change', () => {
+    drillNote.textContent = DRILL_BY_ID[drillSelect.value]?.description || '';
+  });
+  const drillBtn = el('button', 'btn btn-primary', 'Assign drill');
+  drillBtn.addEventListener('click', () => run(
+    link.practice({ type: 'drill', drillId: drillSelect.value }).then((result) => {
+      const gains = result?.improvements || [];
+      flash(gains.length
+        ? `${gains[0].name} improved ${gains[0].trait.toUpperCase()} to ${gains[0].value}${gains.length > 1 ? `, plus ${gains.length - 1} more` : ''}.`
+        : 'Practice period saved.');
+    }), drillBtn, 'Assigning…'));
+  drillBox.append(drillSelect, drillNote, drillBtn);
+  pane.append(drillBox);
+
+  const installedIds = new Set((seat === 'OC' ? (S.customPlays || []) : (S.customDefenses || []))
+    .map((p) => p.id));
+  const calls = (seat === 'OC' ? OFFENSE : DEFENSE)
+    .filter((p) => !p.custom || installedIds.has(p.id));
+  const playBox = el('section', 'practice-choice');
+  playBox.innerHTML = '<h3>Practice a specific play</h3>';
+  const playSelect = el('select', 'practice-select');
+  for (const call of calls) {
+    const option = document.createElement('option');
+    option.value = call.id;
+    option.textContent = `${call.name}${call.custom ? ' — custom' : ''}`;
+    playSelect.append(option);
+  }
+  const playNote = el('p', 'scout-note',
+    'Adds execution edge to this exact call for the upcoming game. Custom designs receive a slightly larger benefit.');
+  const playBtn = el('button', 'btn', 'Assign play period');
+  playBtn.addEventListener('click', () => run(
+    link.practice({ type: 'play', callId: playSelect.value }).then(() => flash('Play period saved.')),
+    playBtn, 'Assigning…'));
+  playBox.append(playSelect, playNote, playBtn);
+  pane.append(playBox);
+}
 
 function paneWeek(pane, S) {
   const g = userGame(S);
@@ -2213,7 +2329,8 @@ async function startSeasonGame(cfg) {
     teamName: cfg.teamName, oppName: cfg.oppName,
     usRecord: cfg.usRecord, themRecord: cfg.themRecord,
     rosters: cfg.rosters, firstPossession: cfg.firstPossession,
-    seasonSeed: cfg.seasonSeed, cpuIdentity: cfg.cpuIdentity, us: cfg.us, them: cfg.them,
+    seasonSeed: cfg.seasonSeed, cpuIdentity: cfg.cpuIdentity, practice: cfg.practice,
+    us: cfg.us, them: cfg.them,
     autoSeat: app.seat === 'OC' ? 'DC' : 'OC',
   });
   app.viewSeat = app.seat;
@@ -2636,6 +2753,9 @@ function renderFeed(g, plays) {
       const designLost = ours ? o.designEdge < -0.035 : o.designEdge > 0.035;
       if (designWon) row.append(el('div', 'tell', 'Your design created a clean schematic answer.'));
       else if (designLost) row.append(el('div', 'tell', 'Their design closed the space you attacked.'));
+      if (Math.abs(o.practiceEdge || 0) >= 0.01) {
+        row.append(el('div', 'tell', 'The reps showed up — this call was practiced during the week.'));
+      }
       if (Math.abs(o.talent || 0) >= 0.035 && o.playerMatchup?.offense && o.playerMatchup?.defense) {
         const m = o.playerMatchup;
         const offenseWon = o.talent > 0;

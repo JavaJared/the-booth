@@ -18,6 +18,7 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
+import { addPracticePeriod } from '../../public/shared/practice.js';
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -314,6 +315,7 @@ const actions = {
           teamName: cfg.teamName, oppName: cfg.oppName,
           usRecord: cfg.usRecord, themRecord: cfg.themRecord,
           rosters: cfg.rosters,
+          practice: cfg.practice,
           atHome: cfg.atHome, us: cfg.us, them: cfg.them,
           seasonSeed: cfg.seasonSeed, cpuIdentity: cfg.cpuIdentity,
           seats: {
@@ -407,6 +409,28 @@ const actions = {
         filmOverlays: next.filmOverlays,
       });
       return { balance: next.filmBank[seat], key: `${teamId}:${callId}` };
+    });
+  },
+
+  /** Assign one of this coordinator's three weekly practice periods. */
+  async addPractice(uid, { seasonId, selection }) {
+    return store().runTransaction(async (tx) => {
+      const ref = seasonRef(seasonId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ApiError(404, 'No season with that code.');
+      const doc = snap.data();
+      const seat = doc.seats?.OC?.uid === uid ? 'OC' : doc.seats?.DC?.uid === uid ? 'DC' : null;
+      if (!seat) throw new ApiError(403, 'You do not have a seat in this season.');
+      if (doc.currentGameId) throw new ApiError(409, 'Practice is locked once the game begins.');
+      const season = hydrate(doc);
+      let result;
+      try { result = addPracticePeriod(season, seat, selection); }
+      catch (e) { throw new ApiError(409, e.message); }
+      tx.update(ref, {
+        rosters: result.season.rosters,
+        practice: result.season.practice,
+      });
+      return { remaining: result.remaining, improvements: result.improvements };
     });
   },
 

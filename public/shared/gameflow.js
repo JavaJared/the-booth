@@ -142,8 +142,12 @@ export function runToNextDecision(gameId, game, humanCall) {
       recordTendency(tendencies[side], state, off.family);
 
       const plan = humanHasBall ? game.gameplan.OC : null;
+      const practiceEdge = humanHasBall
+        ? (game.practice?.OC?.plays?.[offId] || 0)
+        : -(game.practice?.DC?.plays?.[defId] || 0);
       const outcome = resolveSnap(state, offId, defId, rng, tendencies[side], {
         offense: plan,
+        practiceEdge,
         offRoster: humanHasBall ? rosters.US.offense : rosters.CPU.offense,
         defRoster: humanHasBall ? rosters.CPU.defense : rosters.US.defense,
       });
