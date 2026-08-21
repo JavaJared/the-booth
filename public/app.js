@@ -32,6 +32,7 @@ import {
 } from './shared/practice.js';
 import { TRAITS, developmentTrajectory, traitXpCost } from './shared/ratings.js';
 import { normalizeInviteCode } from './shared/codes.js';
+import { talentFeedback } from './shared/feedback.js';
 
 const API_URL = '/api';   // Netlify function; see netlify.toml
 
@@ -2791,29 +2792,6 @@ const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 const num = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
 
 const aggLabel = (v) => v <= -0.75 ? 'Ball control' : v < 0 ? 'Careful' : v === 0 ? 'Balanced' : v < 0.75 ? 'Attacking' : 'Reckless';
-
-function talentFeedback(p, outcome) {
-  const m = outcome.playerMatchup;
-  if (!m?.offense?.player || !m?.defense?.player || !m.decisive) return [];
-  const notes = [];
-  const a = m.decisive.offense, d = m.decisive.defense;
-  if (a && d && Number.isFinite(a.value) && Number.isFinite(d.value)) {
-    if (a.value >= d.value) {
-      notes.push(d.key === 'range'
-        ? `${m.defense.player} lacked the ${d.label.toLowerCase()} to stay with ${m.offense.player}.`
-        : `${m.offense.player}’s ${a.label.toLowerCase()} beat ${m.defense.player}’s ${d.label.toLowerCase()}.`);
-    } else {
-      notes.push(`${m.defense.player}’s ${d.label.toLowerCase()} took away ${m.offense.player}’s ${a.label.toLowerCase()}.`);
-    }
-  }
-  const call = OFF_BY_ID[p.offId], pressure = m.pressure;
-  if (DEF_BY_ID[p.defId]?.rush > 4 && call?.blitzFit >= 0.7 && pressure
-    && (outcome.sack || pressure.defense > pressure.offense)) {
-    notes.push(`The protection identified the blitz, but ${pressure.blocker || 'the line'} lost its matchup${
-      pressure.rusher ? ` to ${pressure.rusher}` : ''}.`);
-  }
-  return notes;
-}
 
 function renderFeed(g, plays) {
   const box = $('lastplay');

@@ -38,6 +38,7 @@ import {
   addPracticePeriod, practiceEffects, practiceLocked, practicePlan,
   practiceRemaining, practicedRoster, practicedStrength,
 } from '../public/shared/practice.js';
+import { talentFeedback } from '../public/shared/feedback.js';
 
 const fixedInvite = inviteCode(Uint8Array.from([0, 1, 31, 32]));
 assert.equal(fixedInvite, `AB${INVITE_ALPHABET[31]}A`,
@@ -262,6 +263,34 @@ assert.equal(fastSnaps.matchup.label, 'Deep-route execution',
 assert.ok(fastSnaps.matchup.decisive?.offense?.key
   && fastSnaps.matchup.decisive?.defense?.key,
 'snap outcomes should retain the exact opposing traits used by post-play feedback');
+
+const pressFeedbackPlay = {
+  offId: 'slants', defId: 'simpress', down: 1, distance: 10,
+  events: [{ type: 'score' }],
+};
+const pressMatchup = {
+  offense: { player: 'Marcus Bell' }, defense: { player: 'Darius Cole' },
+  decisive: {
+    offense: { key: 'release', label: 'Release', value: 72 },
+    defense: { key: 'press', label: 'Press', value: 91 },
+  },
+};
+const touchdownFeedback = talentFeedback(pressFeedbackPlay, {
+  playerMatchup: pressMatchup, complete: true, yards: 40,
+});
+assert.ok(touchdownFeedback.some((line) => /advantage, but .* still won the matchup for the touchdown/i.test(line)),
+  'a touchdown must explain that the receiver overcame a stronger press matchup');
+assert.equal(touchdownFeedback.some((line) => /took away/i.test(line)), false,
+  'the feed must not claim press took away the release on a completed touchdown');
+const incompleteFeedback = talentFeedback({ ...pressFeedbackPlay, events: [] }, {
+  playerMatchup: pressMatchup, complete: false, yards: 0,
+});
+assert.ok(incompleteFeedback.some((line) => /took away/i.test(line)),
+  'the direct defensive-win message remains appropriate when the pass is incomplete');
+assert.deepEqual(talentFeedback(pressFeedbackPlay, {
+  playerMatchup: pressMatchup, complete: true, yards: 40,
+  penalty: { id: 'hold', replay: true },
+}), [], 'a wiped-out play must not receive player matchup feedback');
 
 // Weekly practice belongs to one coordinator, carries three periods, and has
 // diminishing returns when the same work is repeated.
