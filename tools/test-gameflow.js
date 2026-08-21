@@ -224,5 +224,9 @@ for (const call of DEFENSE.filter((p) => !p.custom)) {
   assert.equal(Object.keys(opponentDefenseDiagram(call.id)?.paths || {}).length, 11,
     `${call.name} should diagram every defender`);
 }
+assert.ok(opponentDefenseDiagram('nick2').zones.length > 0,
+  'zone calls should identify coverage landmarks for the overlay');
+assert.equal(opponentDefenseDiagram('cover0').zones.length, 0,
+  'man coverage should not draw zone landmarks');
 
 console.log('Regression tests passed.');

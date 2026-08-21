@@ -266,5 +266,7 @@ export function opponentDefenseDiagram(callId) {
   for (const [spot, start] of Object.entries(spots)) {
     if (!paths[spot]) path(spot, [start[0], Math.max(8, start[1])]);
   }
-  return { play, spots, paths };
+  const zones = play.cov === 'man0' || play.cov === 'man1'
+    ? [] : Object.keys(paths).filter((spot) => !rushers.includes(spot));
+  return { play, spots, paths, zones };
 }

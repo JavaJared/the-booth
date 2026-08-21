@@ -684,6 +684,10 @@ function appendFilmOverlaySvg(parts) {
     const { base, points } = arrow(prev, tip, 1.5, 0.7);
     const line = [...svgPts.slice(0, -1), base];
     parts.push(`<path d="${line.map((q, i) => `${i ? 'L' : 'M'} ${q[0].toFixed(2)} ${q[1].toFixed(2)}`).join(' ')}" class="dz-film-route"/>`);
+    if (overlay.zones?.includes(spot)) {
+      const deep = pts[pts.length - 1][1] >= 15;
+      parts.push(`<ellipse cx="${tip[0]}" cy="${tip[1]}" rx="${deep ? 4.8 : 3.7}" ry="${deep ? 2.8 : 2.2}" class="dz-film-zone"/>`);
+    }
     parts.push(`<polygon points="${points}" class="dz-film-arrow"/>`);
     const start = svgPts[0];
     parts.push(`<circle cx="${start[0]}" cy="${start[1]}" r="1.15" class="dz-film-spot"/>`);
