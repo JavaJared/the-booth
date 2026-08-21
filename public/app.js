@@ -11,7 +11,8 @@ import { advanceWeek, simRemainingWeek, userGame, nextUserGame, record as season
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
   onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS, careerResume,
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
-  interviewQuestions, recordGameFilm, unlockFilmOverlay, filmOverlayKey } from './shared/season.js';
+  interviewQuestions, recordGameFilm, unlockFilmOverlay, filmOverlayKey,
+  shouldEnterSeasonLobby } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { POSITION_GROUPS, DRILL_LABEL, gradeRank } from './shared/draft.js';
 import { depthChart, rosterNeeds, unitSummary as rosterUnit } from './shared/depth.js';
@@ -232,6 +233,7 @@ const CHIRPS = ['Nice call.', 'That is on you.', 'Get me the ball back.', 'Take 
 const app = {
   t: null, seat: 'OC', name: '', user: null, seasonUnsub: null,
   viewSeat: null, picked: null, busy: false, tick: null,
+  seasonGameOptOut: null, joinSeasonGame: null, leaveSeasonGame: null,
 };
 
 /* ---------- setup ---------- */
@@ -306,7 +308,16 @@ $('btn-guest-join').addEventListener('click', async () => {
   } catch (e) { guestErr(e.message.replace(/^.*?: /, '')); }
 });
 
-$('btn-ready').addEventListener('click', () => app.t.ready(true));
+$('btn-ready').addEventListener('click', () => {
+  const seat = app.inSeason ? app.seat : app.t?.mySeat;
+  const ready = !!app.t?.game?.seats?.[seat]?.ready;
+  run(app.t.ready(!ready), $('btn-ready'), ready ? 'Updating…' : 'Ready…');
+});
+$('btn-lobby-back').addEventListener('click', () => {
+  if (app.inSeason && app.leaveSeasonGame) {
+    run(app.leaveSeasonGame(), $('btn-lobby-back'), 'Leaving…');
+  }
+});
 
 let _firebaseClient = null;
 async function firebaseClient() {
@@ -1331,8 +1342,38 @@ function watchSeason(fb, seasonId, seat) {
   app.seat = seat;
   link.local = false;
   app.inSeason = true;
+  const lobbyOptOutKey = `booth:season-lobby-optout:${seasonId}`;
+  try { app.seasonGameOptOut = localStorage.getItem(lobbyOptOutKey); }
+  catch { app.seasonGameOptOut = null; }
   rememberSeasonCode(seasonId);
   let attached = null;
+  const enterGame = (gameId) => {
+    if (!gameId) return;
+    app.seasonGameOptOut = null;
+    try { localStorage.removeItem(lobbyOptOutKey); } catch {}
+    attached = gameId;
+    app.t?.stop?.();
+    const t = new FirebaseTransport(fb);
+    t.mySeat = seat;
+    app.t = t;
+    t.watch(gameId);
+    t.subscribe(render);
+    show('lobby');
+  };
+  app.joinSeasonGame = () => enterGame(app.seasonDoc?.currentGameId);
+  app.leaveSeasonGame = async () => {
+    const gameId = app.t?.gameId || app.seasonDoc?.currentGameId;
+    // Always clear readiness before detaching. This also covers backing out
+    // immediately after clicking Ready, before its snapshot reaches the UI.
+    await app.t.ready(false);
+    app.seasonGameOptOut = gameId;
+    try { localStorage.setItem(lobbyOptOutKey, gameId); } catch {}
+    attached = null;
+    app.t?.stop?.();
+    app.t = null;
+    renderSeason();
+    show('season');
+  };
   app.seasonUnsub = fb.onSnapshot(fb.doc(fb.db, 'seasons', seasonId), (snap) => {
     const designerWasOpen = !$('designer').hidden;
     const doc = snap.data();
@@ -1344,19 +1385,21 @@ function watchSeason(fb, seasonId, seat) {
     registerCustomPlays(app.season.customPlays || []);
     registerCustomDefenses(app.season.customDefenses || []);
 
-    if (doc.currentGameId && attached !== doc.currentGameId) {
-      attached = doc.currentGameId;
-      app.t?.stop?.();
-      const t = new FirebaseTransport(fb);
-      t.mySeat = seat;
-      app.t = t;
-      t.watch(doc.currentGameId);
-      t.subscribe(render);
-      show('game');
+    const autoEnter = shouldEnterSeasonLobby(doc, seat, app.seasonGameOptOut);
+    if (autoEnter && attached !== doc.currentGameId) {
+      enterGame(doc.currentGameId);
+      return;
+    }
+    if (doc.currentGameId && !autoEnter && !attached) {
+      renderSeason();
+      if (designerWasOpen) openDesigner();
+      else show('season');
       return;
     }
     if (!doc.currentGameId) {
       attached = null;
+      app.seasonGameOptOut = null;
+      try { localStorage.removeItem(lobbyOptOutKey); } catch {}
       app.t?.stop?.();
       app.t = null;
       renderSeason();
@@ -1374,6 +1417,9 @@ $('btn-home').addEventListener('click', async () => {
   app.t?.stop?.();
   app.t = null;
   app.inSeason = false;
+  app.seasonGameOptOut = null;
+  app.joinSeasonGame = null;
+  app.leaveSeasonGame = null;
   show('setup');
   homeView('account');
   await refreshSeasonSlots();
@@ -1604,6 +1650,17 @@ function paneWeek(pane, S) {
       box.insertAdjacentHTML('beforeend',
         `<p class="final-score ${verdict}">${verdict === 'won' ? 'Won' : verdict === 'lost' ? 'Lost' : 'Tied'}
          ${usScore}&ndash;${themScore}${done.played ? '' : ' <em>(staff called it)</em>'}</p>`);
+    } else if (!link.local && app.seasonDoc?.currentGameId) {
+      const actions = el('div', 'matchup-actions');
+      const join = el('button', 'btn btn-primary', 'Join game lobby');
+      join.addEventListener('click', () => app.joinSeasonGame?.());
+      actions.append(join);
+      box.append(actions);
+      const other = app.seat === 'OC' ? 'DC' : 'OC';
+      const caller = app.seasonDoc?.vote?.[other] === 'call'
+        ? app.seasonDoc?.seats?.[other]?.displayName
+        : app.seasonDoc?.vote?.[app.seat] === 'call' ? 'You' : 'A coordinator';
+      box.insertAdjacentHTML('beforeend', `<p class="scout-note">${escapeHtml(caller)} opened the game lobby. Join when you are ready.</p>`);
     } else {
       const actions = el('div', 'matchup-actions');
       const mine = app.seasonDoc?.vote?.[app.seat] || null;
@@ -2497,6 +2554,12 @@ function renderLobby(g) {
     row.querySelector('span').textContent = p ? `${p.displayName}${p.ready ? ' — ready' : ''}` : 'Open seat';
     row.classList.toggle('is-ready', !!p?.ready);
   }
+  const mine = app.inSeason ? app.seat : app.t?.mySeat;
+  const ready = !!g.seats?.[mine]?.ready;
+  const button = $('btn-ready');
+  button.textContent = ready ? 'Unready' : "I'm ready";
+  button.classList.toggle('btn-primary', !ready);
+  $('btn-lobby-back').hidden = !app.inSeason;
 }
 
 /** Timeouts are the only clock lever a coordinator has; put them on the board. */

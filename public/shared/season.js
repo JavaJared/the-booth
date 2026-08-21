@@ -140,6 +140,13 @@ export const finishedGameRecorded = (season, gameDocId) => !!gameDocId
   && season.results.some((r) => r.final && r.gameDocId === gameDocId);
 export const weekGames = (season, week) => season.schedule.games.filter((g) => g.week === week);
 
+/** A season lobby opens automatically only for a coordinator who chose to
+ * call. Their partner can keep working on the season page and join manually. */
+export function shouldEnterSeasonLobby(doc, seat, optedOutGameId = null) {
+  return !!doc?.currentGameId && doc.currentGameId !== optedOutGameId
+    && doc.vote?.[seat] === 'call';
+}
+
 /** The user's game this week, or null on a bye. */
 export function userGame(season, week = season.week) {
   if (season.phase === 'playoffs') {

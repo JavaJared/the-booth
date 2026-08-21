@@ -19,6 +19,7 @@ import {
   recordGameFilm,
   nextSeason,
   simRemainingWeek,
+  shouldEnterSeasonLobby,
   startOffseason,
   unlockFilmOverlay,
 } from '../public/shared/season.js';
@@ -49,6 +50,14 @@ assert.equal(normalizeInviteCode(' ab2z '), 'AB2Z',
   'new four-character invitation codes should be case-insensitive');
 assert.equal(normalizeInviteCode('Wp2NXrknSaTLRVATd12d'), 'Wp2NXrknSaTLRVATd12d',
   'legacy Firestore invitation ids must retain their case exactly');
+
+const oneCallerLobby = { currentGameId: 'GAME', vote: { OC: 'call', DC: null } };
+assert.equal(shouldEnterSeasonLobby(oneCallerLobby, 'OC'), true,
+  'the coordinator who calls the game should enter its lobby');
+assert.equal(shouldEnterSeasonLobby(oneCallerLobby, 'DC'), false,
+  'one coordinator calling must not pull the other coordinator into the lobby');
+assert.equal(shouldEnterSeasonLobby(oneCallerLobby, 'OC', 'GAME'), false,
+  'a coordinator who backs out should stay on the season screen');
 
 function gameAtCpuGoalLine() {
   return {

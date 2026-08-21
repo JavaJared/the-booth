@@ -682,6 +682,9 @@ const actions = {
       const g = (await tx.get(ref)).data();
       const seat = seatOf(g, uid);
       if (!seat) throw new ApiError(403, 'Not your game.');
+      if (!ready && g.status !== 'lobby') {
+        throw new ApiError(409, 'The game has already started.');
+      }
       // A solo season deliberately has one empty seat; that unit belongs to
       // the AI and must not keep the human stuck in the lobby.
       const ocReady = g.seats.OC ? (seat === 'OC' ? ready : g.seats.OC.ready) : true;
