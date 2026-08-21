@@ -7,7 +7,7 @@ import {
   FAMILIES, PERS_WEIGHT, DEF_PERS_WEIGHT,
 } from './playbook.js';
 import {
-  pickTarget, coverDefender, pickTackler, pickRusher, talentEdge, protectionFactor, bySpot,
+  pickTarget, coverDefender, pickTackler, pickRusher, talentMatchup, protectionFactor, bySpot,
 } from './roster.js';
 import { spatialMatchup } from './spatial.js';
 
@@ -192,7 +192,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
 
   // Who is actually on the field for this snap.
   const offRoster = plans.offRoster, defRoster = plans.defRoster;
-  let cast = null, talent = 0, targetDesignEdge = 0;
+  let cast = null, talent = 0, playerMatchup = null, targetDesignEdge = 0;
   if (offRoster && defRoster) {
     const target = pickTarget({ ...off, targets: design.targetWeights }, offRoster, rng);
     targetDesignEdge = clamp((design.reads[target?.spot] || 0) * 0.025, -0.025, 0.025);
@@ -200,7 +200,8 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
       ? pickTackler(off, def, defRoster, rng)
       : coverDefender(target?.spot, def, defRoster);
     cast = { target, defender, qb: bySpot(offRoster).QB, rusher: pickRusher(def, defRoster, rng) };
-    talent = talentEdge(off, def, target, defender, offRoster, defRoster);
+    playerMatchup = talentMatchup(off, def, target, defender, offRoster, defRoster, cast.rusher);
+    talent = playerMatchup.edge;
   }
 
   const exactEdge = clamp(design.edge + targetDesignEdge, -0.11, 0.11);
@@ -211,7 +212,7 @@ export function resolveSnap(state, offId, defId, rng, tendencies, plans = {}) {
   const base = {
     offId, defId, offName: off.name, defName: def.name,
     family: off.family, edge: +edge.toFixed(3), readEdge: +readEdge.toFixed(3),
-    talent: +talent.toFixed(3), designEdge: +exactEdge.toFixed(3),
+    talent: +talent.toFixed(3), playerMatchup, designEdge: +exactEdge.toFixed(3),
     yards: 0, turnover: null, complete: null, sack: false, touchdown: false,
     outOfBounds: false, clockStops: false, penalty: null,
   };

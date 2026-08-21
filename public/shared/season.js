@@ -75,7 +75,6 @@ export function hydrate(saved) {
   saved.filmBank = { OC: 0, DC: 0, ...saved.filmBank };
   saved.filmOverlays = { OC: [], DC: [], ...(saved.filmOverlays || {}) };
   registerSeasonCalls(saved);
-  if (saved.rosters && saved.schedule) return saved;
   const ids = TEAMS.map((t) => t.id);
   // Generated from the seed on year one, then carried forward: once players can
   // be drafted, signed or aged, a roster stops being a function of the seed.
@@ -86,6 +85,15 @@ export function hydrate(saved) {
     const usedNames = new Set();
     rosters = Object.fromEntries(ids.map((id) =>
       [id, migrateRoster(rosters[id] || { offense: [], defense: [] }, saved.seed, id, usedNames)]));
+  }
+  // Full modern saves already carry a schedule, but they may still predate a
+  // newer player schema. Always run the roster migration before returning.
+  if (saved.rosters && saved.schedule) {
+    return {
+      ...saved,
+      rosters,
+      strength: Object.fromEntries(ids.map((id) => [id, teamStrength(rosters[id])])),
+    };
   }
   return {
     ...saved,

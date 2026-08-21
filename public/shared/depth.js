@@ -115,6 +115,8 @@ export function depthChart(season, side) {
     return {
       spot: p.spot, pos: p.pos, name: p.name, number: p.number,
       rating: p.rating,
+      traits: p.traits || null,
+      development: p.development || 'normal',
       age: p.age ?? null,
       rookie: p.draftedIn != null && p.draftedIn >= (season.year - 1),
       ...t,

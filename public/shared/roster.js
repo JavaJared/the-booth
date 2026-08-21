@@ -4,6 +4,13 @@
 // every client reproduce the identical roster.
 import { mulberry32, hashSeed } from './engine.js';
 import { FIRST, LAST, RESERVED } from './names.js';
+import {
+  POSITION_TRAITS, DEVELOPMENT_LABEL, developmentFromRng,
+  traitScore, traitsFromRating, visibleTraits,
+} from './ratings.js';
+import { offenseGeometry, defenseGeometry } from './spatial.js';
+
+export { DEVELOPMENT_LABEL, visibleTraits } from './ratings.js';
 
 // role: how the position is used. base: rating centre. spread: how much it varies.
 /**
@@ -120,6 +127,17 @@ function build(rng, spots, used, taken) {
   }));
 }
 
+function addPlayerTraits(list, seed) {
+  return list.map((p) => {
+    const traitRng = mulberry32(hashSeed(`${seed}:${p.name}:${p.spot}:traits`));
+    return {
+      ...p,
+      traits: traitsFromRating(p.pos, p.rating, traitRng),
+      development: developmentFromRng(mulberry32(hashSeed(`${seed}:${p.name}:development`))),
+    };
+  });
+}
+
 /** Both teams, offense and defense, from one seed. */
 export function makeRosters(seed) {
   const r = (tag) => mulberry32(hashSeed(`${seed}:${tag}`));
@@ -128,12 +146,12 @@ export function makeRosters(seed) {
   const usNums = new Set(), cpuNums = new Set();
   return {
     US: {
-      offense: build(r('us-off'), OFF_SPOTS, used, usNums),
-      defense: build(r('us-def'), DEF_SPOTS, used, usNums),
+      offense: addPlayerTraits(build(r('us-off'), OFF_SPOTS, used, usNums), `${seed}:us-off`),
+      defense: addPlayerTraits(build(r('us-def'), DEF_SPOTS, used, usNums), `${seed}:us-def`),
     },
     CPU: {
-      offense: build(r('cpu-off'), OFF_SPOTS, used, cpuNums),
-      defense: build(r('cpu-def'), DEF_SPOTS, used, cpuNums),
+      offense: addPlayerTraits(build(r('cpu-off'), OFF_SPOTS, used, cpuNums), `${seed}:cpu-off`),
+      defense: addPlayerTraits(build(r('cpu-def'), DEF_SPOTS, used, cpuNums), `${seed}:cpu-def`),
     },
   };
 }
@@ -154,8 +172,10 @@ export function makeLeagueRosters(seed, teamIds) {
   for (const id of teamIds) {
     const nums = new Set();
     out[id] = {
-      offense: build(mulberry32(hashSeed(`${seed}:${id}:off`)), OFF_SPOTS, used, nums),
-      defense: build(mulberry32(hashSeed(`${seed}:${id}:def`)), DEF_SPOTS, used, nums),
+      offense: addPlayerTraits(
+        build(mulberry32(hashSeed(`${seed}:${id}:off`)), OFF_SPOTS, used, nums), `${seed}:${id}:off`),
+      defense: addPlayerTraits(
+        build(mulberry32(hashSeed(`${seed}:${id}:def`)), DEF_SPOTS, used, nums), `${seed}:${id}:def`),
     };
   }
   return out;
@@ -186,14 +206,23 @@ export function migrateRoster(roster, seed, teamId, usedNames = new Set()) {
           ...cur,
           age: cur.age ?? Math.round(Math.max(21, Math.min(36, gauss(rng, 26.5, 3.4)))),
           number: cur.number ?? drawNumber(rng, s.nums, taken),
+          traits: cur.traits || traitsFromRating(cur.pos, cur.rating,
+            mulberry32(hashSeed(`${seed}:${teamId}:${cur.name}:${cur.spot}:traits`))),
+          development: cur.development || developmentFromRng(
+            mulberry32(hashSeed(`${seed}:${teamId}:${cur.name}:development`))),
         };
       }
+      const rating = Math.round(Math.max(45, Math.min(97, gauss(rng, s.base, s.spread))));
       return {
         spot: s.id, pos: s.label,
         name: drawName(rng, used),
-        rating: Math.round(Math.max(45, Math.min(97, gauss(rng, s.base, s.spread)))),
+        rating,
         number: drawNumber(rng, s.nums, taken),
         age: Math.round(Math.max(21, Math.min(36, gauss(rng, 26.5, 3.4)))),
+        traits: traitsFromRating(s.label, rating,
+          mulberry32(hashSeed(`${seed}:${teamId}:${s.id}:new:traits`))),
+        development: developmentFromRng(
+          mulberry32(hashSeed(`${seed}:${teamId}:${s.id}:new:development`))),
       };
     });
   };
@@ -207,7 +236,8 @@ export function migrateRoster(roster, seed, teamId, usedNames = new Set()) {
 export const needsMigration = (roster) =>
   !roster || (roster.offense?.length || 0) < OFF_SPOTS.length
           || (roster.defense?.length || 0) < DEF_SPOTS.length
-          || (roster.offense || []).some((p) => p.age == null);
+          || [...(roster.offense || []), ...(roster.defense || [])].some((p) =>
+            p.age == null || p.development == null || (POSITION_TRAITS[p.pos] && !p.traits));
 
 /** Collapse a roster into the two numbers a fast simulation needs. */
 export function teamStrength(roster) {
@@ -281,16 +311,102 @@ export function pickRusher(def, defRoster, rng) {
  * A 90 receiver on a 65 corner is worth about +0.11 edge in man; the coverage
  * matchup itself swings roughly twice that.
  */
-export function talentEdge(off, def, target, defender, offRoster, defRoster) {
+const routeFacts = (off, spot) => {
+  const path = offenseGeometry(off)?.paths?.[spot] || [];
+  const points = path.map((p) => Array.isArray(p) ? p : [p.x, p.y]);
+  const depth = points.length ? Math.max(...points.map((p) => p[1])) :
+    (off.family === 'shot' ? 22 : off.family === 'quick' ? 6 : 11);
+  let cuts = 0;
+  for (let i = 2; i < points.length; i++) {
+    const a = Math.atan2(points[i - 1][1] - points[i - 2][1],
+      points[i - 1][0] - points[i - 2][0]);
+    const b = Math.atan2(points[i][1] - points[i - 1][1], points[i][0] - points[i - 1][0]);
+    if (Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a))) > 0.55) cuts++;
+  }
+  return { depth, cuts };
+};
+
+export function assignmentTraits(off, player, role = 'target') {
+  if (!player) return {};
+  if (off.family === 'run') {
+    if (role === 'blocker') return off.edge === 'outside'
+      ? { pull: 0.42, block: 0.33, motor: 0.15, frame: 0.10 }
+      : { block: 0.40, anchor: 0.30, frame: 0.18, motor: 0.12 };
+    if (role === 'defender') return off.edge === 'outside'
+      ? { tackle: 0.38, speed: 0.30, instinct: 0.20, shed: 0.12 }
+      : { tackle: 0.38, shed: 0.28, instinct: 0.20, power: 0.14 };
+    return off.edge === 'outside'
+      ? { speed: 0.34, agility: 0.28, burst: 0.24, power: 0.14 }
+      : { power: 0.31, burst: 0.27, agility: 0.23, speed: 0.19 };
+  }
+  if (role === 'qb') {
+    if (off.family === 'shot') return { arm: 0.42, acc: 0.25, poise: 0.20, field: 0.13 };
+    if (off.family === 'quick') return { acc: 0.42, field: 0.28, poise: 0.20, arm: 0.10 };
+    return { acc: 0.32, field: 0.27, poise: 0.24, arm: 0.17 };
+  }
+  if (role === 'rusher') return { rush: 0.43, burst: 0.24, motor: 0.18, shed: 0.15 };
+  if (role === 'blocker') return { anchor: 0.38, block: 0.34, motor: 0.18, frame: 0.10 };
+  const { depth, cuts } = routeFacts(off, player.spot);
+  if (player.pos === 'RB') return off.family === 'screen'
+    ? { hands: 0.30, agility: 0.27, speed: 0.23, burst: 0.20 }
+    : { hands: 0.34, agility: 0.24, speed: 0.22, burst: 0.20 };
+  if (depth >= 17) return {
+    speed: 0.34, release: 0.20, route: cuts ? 0.28 : 0.22,
+    hands: cuts ? 0.18 : 0.24,
+  };
+  if (cuts) return { route: 0.36, agility: 0.22, release: 0.20, hands: 0.22 };
+  return { route: 0.31, hands: 0.29, release: 0.23, speed: 0.17 };
+}
+
+function coverageTraits(def, defender, off, target) {
+  const man = def.cov.startsWith('man');
+  const { depth } = routeFacts(off, target?.spot);
+  if (defender?.pos === 'S') return man
+    ? { cover: 0.34, range: 0.24, instinct: 0.20, speed: 0.14, tackle: 0.08 }
+    : { range: 0.34, instinct: 0.30, cover: 0.23, speed: 0.13 };
+  if (defender?.pos === 'LB') return man
+    ? { cover: 0.35, instinct: 0.27, speed: 0.23, tackle: 0.15 }
+    : { instinct: 0.36, cover: 0.30, speed: 0.18, tackle: 0.16 };
+  return man
+    ? { cover: 0.36, press: depth <= 10 ? 0.25 : 0.14,
+      agility: 0.22, speed: depth <= 10 ? 0.17 : 0.28 }
+    : { cover: 0.34, instinct: 0.28, speed: 0.21, agility: 0.17 };
+}
+
+/** Assignment-specific player matchup, retained as a structured result so the
+ * UI can explain which abilities mattered rather than displaying a mystery bonus. */
+export function talentMatchup(off, def, target, defender, offRoster, defRoster, rusher = null) {
   const o = bySpot(offRoster);
   if (off.family === 'run') {
-    return ((o.OL?.rating || 75) - 75) / 300 + ((target?.rating || 75) - 75) / 340;
+    const carrier = traitScore(target, assignmentTraits(off, target));
+    const blocking = traitScore(o.OL, assignmentTraits(off, o.OL, 'blocker'));
+    const tackling = traitScore(defender, assignmentTraits(off, defender, 'defender'));
+    const edge = (blocking - 75) / 300 + (carrier - 75) / 340 - (tackling - 75) / 420;
+    return { edge, label: off.edge === 'outside' ? 'Perimeter execution' : 'Interior execution',
+      offense: { player: target?.name, score: Math.round(carrier) },
+      support: { player: o.OL?.name, score: Math.round(blocking) },
+      defense: { player: defender?.name, score: Math.round(tackling) } };
   }
   const man = def.cov.startsWith('man');
-  const cover = defRoster ? effectiveCover(defender, defRoster, man) : (defender?.rating || 75);
-  const matchup = ((target?.rating || 75) - cover) / 100 * (man ? 0.16 : 0.10);
-  const qb = ((o.QB?.rating || 75) - 75) / 300;
-  return matchup + qb;
+  const receiver = traitScore(target, assignmentTraits(off, target));
+  const rawCover = traitScore(defender, coverageTraits(def, defender, off, target));
+  const zoneOverall = defRoster ? effectiveCover(defender, defRoster, false) : rawCover;
+  const cover = man ? rawCover : rawCover * 0.70 + zoneOverall * 0.30;
+  const qb = traitScore(o.QB, assignmentTraits(off, o.QB, 'qb'));
+  const protect = traitScore(o.OL, assignmentTraits(off, o.OL, 'blocker'));
+  const rush = traitScore(rusher, assignmentTraits(off, rusher, 'rusher'));
+  const matchup = (receiver - cover) / 100 * (man ? 0.16 : 0.10);
+  const pressure = rusher ? (protect - rush) / 850 : 0;
+  return { edge: matchup + (qb - 75) / 300 + pressure,
+    label: routeFacts(off, target?.spot).depth >= 17 ? 'Deep-route execution' : 'Route execution',
+    offense: { player: target?.name, score: Math.round(receiver) },
+    support: { player: o.QB?.name, score: Math.round(qb) },
+    defense: { player: defender?.name, score: Math.round(cover) },
+    pressure: rusher ? { offense: Math.round(protect), defense: Math.round(rush) } : null };
+}
+
+export function talentEdge(off, def, target, defender, offRoster, defRoster, rusher = null) {
+  return talentMatchup(off, def, target, defender, offRoster, defRoster, rusher).edge;
 }
 
 /** The matchup board: who covers whom, and by how much. Same numbers the
@@ -311,4 +427,42 @@ export function matchupBoard(offRoster, defRoster, man = true) {
 }
 
 /** Pass protection: a good line buys the quarterback time. */
-export const protectionFactor = (offRoster) => 1 - ((bySpot(offRoster).OL?.rating || 75) - 75) / 300;
+export const protectionFactor = (offRoster) => {
+  const ol = bySpot(offRoster).OL;
+  const score = traitScore(ol, { anchor: 0.38, block: 0.34, motor: 0.18, frame: 0.10 });
+  return 1 - (score - 75) / 300;
+};
+
+/** How naturally the current personnel fits a called offensive concept. */
+export function offensivePlayFit(off, offRoster) {
+  if (!off || !offRoster) return null;
+  const players = bySpot(offRoster);
+  if (off.family === 'run') {
+    const carrier = Object.entries(off.targets || {}).sort((a, b) => b[1] - a[1])
+      .map(([spot]) => players[spot]).find(Boolean) || players.RB1;
+    const rows = [
+      { player: carrier, score: traitScore(carrier, assignmentTraits(off, carrier)) },
+      { player: players.OL, score: traitScore(players.OL, assignmentTraits(off, players.OL, 'blocker')) },
+    ];
+    return { score: Math.round(rows.reduce((a, r) => a + r.score, 0) / rows.length), rows };
+  }
+  const rows = Object.keys(off.targets || {}).map((spot) => players[spot]).filter(Boolean)
+    .map((player) => ({ player, score: traitScore(player, assignmentTraits(off, player)) }));
+  const qb = players.QB;
+  rows.push({ player: qb, score: traitScore(qb, assignmentTraits(off, qb, 'qb')) });
+  return { score: Math.round(rows.reduce((a, r) => a + r.score, 0) / Math.max(1, rows.length)), rows };
+}
+
+/** Fit of a defensive roster for the exact call: rushers rush, everyone else
+ * is graded on the coverage technique the coordinator drew. */
+export function defensivePlayFit(def, defRoster) {
+  if (!def || !defRoster) return null;
+  const players = bySpot(defRoster), geometry = defenseGeometry(def);
+  const rows = Object.values(players).filter((p) => geometry?.spots?.[p.spot]).map((player) => {
+    const rushing = geometry.rushers.includes(player.spot);
+    const weights = rushing ? assignmentTraits({ family: 'pass' }, player, 'rusher')
+      : coverageTraits(def, player, { family: 'dropback' }, { spot: 'WR1' });
+    return { player, score: traitScore(player, weights), role: rushing ? 'Rush' : 'Cover' };
+  });
+  return { score: Math.round(rows.reduce((a, r) => a + r.score, 0) / Math.max(1, rows.length)), rows };
+}

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { computeEdge, resolveSnap, newGameState, emptyTendencies } from '../public/shared/engine.js';
+import {
+  computeEdge, resolveSnap, newGameState, emptyTendencies, mulberry32, hashSeed,
+} from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
 import {
   OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID, registerCustomPlays,
@@ -18,7 +20,11 @@ import {
   unlockFilmOverlay,
 } from '../public/shared/season.js';
 import { TEAMS } from '../public/shared/league.js';
-import { DEF_SPOTS } from '../public/shared/roster.js';
+import {
+  DEF_SPOTS, assignmentTraits, offensivePlayFit, talentMatchup,
+} from '../public/shared/roster.js';
+import { ratingFromTraits, traitScore } from '../public/shared/ratings.js';
+import { addToRoster, ageRoster, makeClass } from '../public/shared/draft.js';
 import { depthChart } from '../public/shared/depth.js';
 import {
   FILM_OVERLAY_COST, filmRows, opponentDiagram, opponentDefenseDiagram,
@@ -90,6 +96,108 @@ assert.deepEqual([...ids], [customId, 'cd-cold-start-regression'],
 // roster page may later promote that same player to another slot, but his
 // existing season statistics must follow his stable identity.
 const statSeason = createSeason({ seed: 'diag0', userTeam: TEAMS[0].id });
+const allPlayers = Object.values(statSeason.rosters)
+  .flatMap((r) => [...r.offense, ...r.defense]);
+const profiledPlayers = allPlayers.filter((p) => p.traits);
+assert.ok(profiledPlayers.length > 1500,
+  'every non-specialist in the league should receive a position trait profile');
+assert.ok(profiledPlayers.every((p) =>
+  Math.abs(p.rating - ratingFromTraits(p.pos, p.traits, p.rating)) <= 1),
+'position traits should preserve the player\'s established overall quality');
+
+// A complete legacy save used to return before roster migrations ran. Traits
+// must be added even when the old document already carries its schedule.
+const legacyRatingsSave = structuredClone(statSeason);
+const legacyPlayer = legacyRatingsSave.rosters[legacyRatingsSave.userTeam].offense[0];
+const legacyIdentity = { name: legacyPlayer.name, rating: legacyPlayer.rating };
+delete legacyPlayer.traits;
+delete legacyPlayer.development;
+const migratedRatings = hydrate(legacyRatingsSave);
+const migratedPlayer = migratedRatings.rosters[migratedRatings.userTeam].offense[0];
+assert.deepEqual({ name: migratedPlayer.name, rating: migratedPlayer.rating }, legacyIdentity,
+  'rating migration should never replace or reroll an existing player');
+assert.ok(migratedPlayer.traits && migratedPlayer.development,
+  'a complete legacy save should receive traits and a development rate');
+
+// Draft scouting already knew the prospect's individual traits. Making the
+// roster must retain that identity instead of collapsing him into one number.
+const prospect = makeClass('ratings-draft', 2027)[0];
+const rosterForProspect = structuredClone(statSeason.rosters[statSeason.userTeam]);
+const positionPlayers = rosterForProspect[prospect.side].filter((p) => p.pos === prospect.pos);
+positionPlayers.forEach((p) => { p.rating = Math.min(p.rating, 40); });
+const signedProspect = addToRoster(rosterForProspect, { ...prospect, rating: 99 });
+const rosterProspect = signedProspect.roster[prospect.side].find((p) => p.name === prospect.name);
+assert.deepEqual(rosterProspect.traits,
+  Object.fromEntries(Object.keys(rosterProspect.traits).map((key) => [key, prospect.traits[key]])),
+  'a drafted player should carry his scouted position traits onto the roster');
+
+// Progression moves individual abilities, then derives overall from them.
+const youngRoster = { offense: [{
+  spot: 'QB', pos: 'QB', name: 'Progression Fixture', rating: 75, age: 21,
+  traits: { arm: 78, acc: 72, poise: 75, field: 76 }, development: 'quick',
+}], defense: [] };
+const agedPlayer = ageRoster(youngRoster, 'ratings-age', 2027).offense[0];
+assert.notDeepEqual(agedPlayer.traits, youngRoster.offense[0].traits,
+  'annual development should move individual attributes rather than only overall');
+assert.equal(agedPlayer.rating, ratingFromTraits(agedPlayer.pos, agedPlayer.traits, 75),
+  'post-development overall should be derived from the updated traits');
+
+// Two equally rated receivers should fit different concepts based on how they
+// win. Speed matters on verticals; detailed route skill matters on a comeback.
+const speedReceiver = { spot: 'WR1', pos: 'WR', name: 'Speed Receiver', rating: 78,
+  traits: { speed: 99, hands: 80, route: 65, release: 99, burst: 96 } };
+const routeReceiver = { spot: 'WR1', pos: 'WR', name: 'Route Receiver', rating: 78,
+  traits: { speed: 45, hands: 95, route: 99, release: 80, burst: 55 } };
+assert.ok(traitScore(speedReceiver, assignmentTraits(OFF_BY_ID.verts, speedReceiver))
+  > traitScore(routeReceiver, assignmentTraits(OFF_BY_ID.verts, routeReceiver)),
+'vertical concepts should prefer the receiver with superior speed and burst');
+assert.ok(traitScore(routeReceiver, assignmentTraits(OFF_BY_ID.hitches, routeReceiver))
+  > traitScore(speedReceiver, assignmentTraits(OFF_BY_ID.hitches, speedReceiver)),
+'breaking routes should prefer the superior route runner');
+
+const fitRoster = structuredClone(statSeason.rosters[statSeason.userTeam].offense);
+Object.assign(fitRoster.find((p) => p.spot === 'WR1'), speedReceiver);
+const verticalFit = offensivePlayFit(OFF_BY_ID.verts, fitRoster);
+assert.ok(verticalFit.rows.find((r) => r.player.spot === 'WR1').score > 80,
+  'the play designer should expose assignment fit from the same trait calculation');
+
+const neutralDefense = [{ spot: 'CB1', pos: 'CB', name: 'Neutral Corner', rating: 78,
+  traits: { cover: 78, speed: 78, press: 78, instinct: 78, agility: 78 } }];
+const qb = { spot: 'QB', pos: 'QB', name: 'Neutral QB', rating: 75,
+  traits: { arm: 75, acc: 75, poise: 75, field: 75 } };
+const ol = { spot: 'OL', pos: 'OL', name: 'Neutral Line', rating: 75,
+  traits: { block: 75, anchor: 75, pull: 75, frame: 75, motor: 75 } };
+const edge = { spot: 'EDGE1', pos: 'EDGE', name: 'Neutral Edge', rating: 75,
+  traits: { rush: 75, burst: 75, shed: 75, motor: 75, frame: 75 } };
+const fastDeepEdge = talentMatchup(OFF_BY_ID.verts, DEF_BY_ID.nick1, speedReceiver,
+  neutralDefense[0], [qb, ol, speedReceiver], neutralDefense, edge).edge;
+const technicianDeepEdge = talentMatchup(OFF_BY_ID.verts, DEF_BY_ID.nick1, routeReceiver,
+  neutralDefense[0], [qb, ol, routeReceiver], neutralDefense, edge).edge;
+assert.ok(fastDeepEdge > technicianDeepEdge,
+  'live snap talent should reward the player whose specific traits fit the assignment');
+const traitTestPlay = { ...OFF_BY_ID.verts, id: 'trait-test-verticals', custom: true,
+  targets: { WR1: 100 } };
+registerCustomPlays([traitTestPlay]);
+const traitGameRosters = statSeason.rosters[statSeason.userTeam];
+const snapsFor = (receiver) => {
+  const offense = structuredClone(traitGameRosters.offense);
+  Object.assign(offense.find((p) => p.spot === 'WR1'), receiver);
+  let completions = 0, matchup = null;
+  for (let i = 0; i < 3000; i++) {
+    const out = resolveSnap(newGameState({ firstPossession: 'US' }), traitTestPlay.id, 'nick1',
+      mulberry32(hashSeed(`trait-snap:${i}`)), emptyTendencies(), {
+        offRoster: offense, defRoster: statSeason.rosters[TEAMS[1].id].defense,
+      });
+    if (out.complete) completions++;
+    matchup = out.playerMatchup;
+  }
+  return { completions, matchup };
+};
+const fastSnaps = snapsFor(speedReceiver), routeSnaps = snapsFor(routeReceiver);
+assert.ok(fastSnaps.completions > routeSnaps.completions + 20,
+  'assignment-specific traits should create a measurable live completion advantage');
+assert.equal(fastSnaps.matchup.label, 'Deep-route execution',
+  'snap outcomes should explain which player assignment was evaluated');
 const defense = statSeason.rosters[statSeason.userTeam].defense;
 const slotOrder = (a, b) => DEF_SPOTS.findIndex((s) => s.id === a)
   - DEF_SPOTS.findIndex((s) => s.id === b);

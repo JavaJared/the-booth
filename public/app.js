@@ -1,7 +1,10 @@
 import { OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID } from './shared/playbook.js';
 import { computeEdge, newGameState, emptyTendencies, fieldGoalProb, readTendencies, distBucket } from './shared/engine.js';
 import { callRecord, opponentReport, shellReport, selfScout, unitSummary, isSuccess, boxScore } from './shared/scout.js';
-import { makeRosters, matchupBoard, bySpot } from './shared/roster.js';
+import {
+  makeRosters, matchupBoard, bySpot, visibleTraits, DEVELOPMENT_LABEL,
+  offensivePlayFit, defensivePlayFit,
+} from './shared/roster.js';
 import { advanceWeek, simRemainingWeek, userGame, nextUserGame, record as seasonRecord,
   liveConfig, statsFromPlays, resume, weekLabel, weekGames, REGULAR_WEEKS,
   hydrate, dehydrate, startOffseason, recordInterview, interviewsLeft, canReady,
@@ -859,6 +862,20 @@ function drawDefense() {
 }
 
 /** Live read of the concept, so the geometry explains itself. */
+function designerRoster(side) {
+  return app.season?.rosters?.[app.season.userTeam]?.[side] || null;
+}
+
+function personnelFitHtml(fit) {
+  if (!fit) return '';
+  const rows = [...fit.rows].sort((a, b) => b.score - a.score).slice(0, 4);
+  return '<div class="dz-read"><h4>Personnel fit</h4></div>'
+    + table(['', 'Assignment'], [
+      ['Unit fit', `<b class="gap ${fit.score >= 82 ? 'good' : fit.score < 68 ? 'bad' : ''}">${fit.score}</b>`],
+      ...rows.map((r) => [`${escapeHtml(r.player.name)} (${r.player.spot})`, `${Math.round(r.score)}${r.role ? ` · ${r.role}` : ''}`]),
+    ]);
+}
+
 function readDesigner() {
   if (DZ.mode === 'def') return readDefensePanel();
   if (DZ.mode === 'run') return readRunPanel();
@@ -879,6 +896,7 @@ function readDesigner() {
   const film = overlayDiagram();
   const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
   const exact = film?.play?.cov ? spatialMatchup(play, film.play).edge : 0;
+  const fit = offensivePlayFit(play, designerRoster('offense'));
   const c = play.structure;
   const covs = [['man1', 'Man'], ['cover2', 'Cover 2'], ['tampa2', 'Tampa 2'],
     ['cover3', 'Cover 3'], ['quarters', 'Quarters']];
@@ -891,6 +909,7 @@ function readDesigner() {
         : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
       ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
+    + personnelFitHtml(fit)
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
         ['Crossers', `${c.crossers}`],
@@ -931,6 +950,7 @@ function readRunPanel() {
   const film = overlayDiagram();
   const matchup = film?.play?.cov ? computeEdge(play, film.play) : null;
   const exact = film?.play?.cov ? spatialMatchup(play, film.play).edge : 0;
+  const fit = offensivePlayFit(play, designerRoster('offense'));
   box.innerHTML = `<p class="dz-tag">${play.tag}</p>`
     + `<p class="scout-note" style="padding:0">Attacks ${play.edge === 'outside' ? 'the perimeter' : 'inside'}.</p>`
     + (film?.play?.cov ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
@@ -939,6 +959,7 @@ function readRunPanel() {
         : matchup < -0.035 ? '<b class="gap bad">Defense</b>' : 'Even'],
       ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
+    + personnelFitHtml(fit)
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
         ['Aiming point', r.edge === 'outside' ? 'outside the tackle' : 'between the tackles'],
@@ -965,6 +986,7 @@ function readDefensePanel() {
   const overlay = overlayDiagram();
   const matchup = overlay ? computeEdge(overlay.play, call) : null;
   const exact = overlay ? spatialMatchup(overlay.play, call).edge : 0;
+  const fit = defensivePlayFit(call, designerRoster('defense'));
   $('dz-read').innerHTML = `<p class="dz-tag">${COV_LABEL[call.cov]}</p>`
     + `<p class="scout-note" style="padding:0">${call.tag || 'base look'}</p>`
     + (overlay ? `<div class="dz-read"><h4>Film matchup</h4></div>${table(['', ''], [
@@ -973,6 +995,7 @@ function readDefensePanel() {
         : matchup > 0.035 ? '<b class="gap bad">Offense</b>' : 'Even'],
       ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
+    + personnelFitHtml(fit)
     + `<label class="dz-check" style="margin:.6rem 0"><input type="checkbox" id="dz-man"${DZ.man ? ' checked' : ''}> Backs play man</label>`
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
@@ -2043,6 +2066,8 @@ function paneRoster(pane, S) {
   for (const g of groups) {
     const grp = el('div', 'depth-group', `<h4>${g.pos}</h4>`);
     g.players.forEach((p, i) => {
+      const traits = visibleTraits(p).map((t) =>
+        `<i title="${escapeHtml(t.label)}">${t.key.toUpperCase()} <u>${t.value}</u></i>`).join('');
       const stat = side === 'offense'
         ? (p.att ? `${p.comp}/${p.att}, ${p.passYards} yds, ${p.passTD} TD, ${p.int} INT`
           : p.carries ? `${p.carries} car, ${p.rushYards} yds, ${p.rushTD} TD`
@@ -2055,7 +2080,8 @@ function paneRoster(pane, S) {
         <span class="slot">${i === 0 ? 'ST' : i + 1}</span>
         <span class="num">${p.number ?? ''}</span>
         <span class="who"><b>${p.name}</b>${p.rookie ? ' <em class="rk">R</em>' : ''}
-          <span>age ${p.age}</span></span>
+          <span>age ${p.age} &middot; ${DEVELOPMENT_LABEL[p.development] || 'Normal'} development</span>
+          ${traits ? `<span class="player-traits">${traits}</span>` : ''}</span>
         <span class="rate ${p.rating >= 85 ? 'good' : p.rating < 65 ? 'bad' : ''}">${p.rating}</span>
         <span class="line">${stat}</span>`;
       grp.append(row);
@@ -2610,6 +2636,14 @@ function renderFeed(g, plays) {
       const designLost = ours ? o.designEdge < -0.035 : o.designEdge > 0.035;
       if (designWon) row.append(el('div', 'tell', 'Your design created a clean schematic answer.'));
       else if (designLost) row.append(el('div', 'tell', 'Their design closed the space you attacked.'));
+      if (Math.abs(o.talent || 0) >= 0.035 && o.playerMatchup?.offense && o.playerMatchup?.defense) {
+        const m = o.playerMatchup;
+        const offenseWon = o.talent > 0;
+        const winner = offenseWon ? m.offense : m.defense;
+        const loser = offenseWon ? m.defense : m.offense;
+        row.append(el('div', 'tell', `${escapeHtml(winner.player)} (${winner.score}) won the `
+          + `${m.label.toLowerCase()} matchup against ${escapeHtml(loser.player)} (${loser.score}).`));
+      }
       if (o.predictionHit) row.append(el('div', 'tell', `Read confirmed: ${o.predictionActual}. +1 film point.`));
       box.append(row);
     });

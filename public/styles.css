@@ -651,6 +651,11 @@ table.scout s{color:var(--ink-3)}
 .depth-row .num{font-family:var(--mono);font-size:.7rem;color:var(--ink-3);text-align:right}
 .depth-row .who b{font-size:.88rem;font-weight:600}
 .depth-row .who span{font-size:.7rem;color:var(--ink-3);margin-left:.35rem}
+.depth-row .who .player-traits{display:flex;gap:.24rem;flex-wrap:wrap;margin:.22rem 0 0}
+.player-traits i{font-style:normal;font-family:var(--cond);font-size:.58rem;letter-spacing:.04em;
+  color:var(--ink-2);border:1px solid var(--hair);background:var(--paper);padding:.05rem .2rem;
+  border-radius:2px;white-space:nowrap}
+.player-traits i u{text-decoration:none;font-family:var(--mono);color:var(--ink);font-weight:600}
 .depth-row .rk{font-style:normal;font-family:var(--cond);font-size:.58rem;font-weight:700;
   color:var(--paper);background:var(--pencil);border-radius:2px;padding:0 .2rem;vertical-align:.1em}
 .depth-row .rate{font-family:var(--cond);font-weight:700;font-size:1.05rem;text-align:right}

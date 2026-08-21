@@ -12,6 +12,11 @@ import { mulberry32, hashSeed } from './engine.js';
 import { FIRST, LAST, RESERVED } from './names.js';
 import { OFF_SPOTS, DEF_SPOTS } from './roster.js';
 import { TEAMS, sortedStandings } from './league.js';
+import {
+  TRAITS, POSITION_TRAITS, grade, ratingFromTraits, traitsFromRating, developmentFromRng,
+} from './ratings.js';
+
+export { TRAITS, POSITION_TRAITS } from './ratings.js';
 
 export const CLASS_SIZE = 224;
 export const FA_SIZE = 24;
@@ -28,38 +33,6 @@ function gauss(rng, mean, sd) {
   return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-
-/* ---------------------------------------------------------------- traits */
-
-export const TRAITS = {
-  arm: 'Arm talent', acc: 'Accuracy', poise: 'Pocket poise', field: 'Field vision',
-  speed: 'Speed', burst: 'Burst', agility: 'Agility', power: 'Power',
-  hands: 'Hands', route: 'Route running', release: 'Release',
-  block: 'Blocking', anchor: 'Anchor', pull: 'Mobility',
-  rush: 'Pass rush', shed: 'Block shedding', tackle: 'Tackling',
-  cover: 'Coverage', instinct: 'Instincts', range: 'Range', press: 'Press',
-  motor: 'Motor', frame: 'Frame',
-};
-
-/**
- * Which traits matter at each position, and how much. The weights double as
- * the recipe for the overall rating, so a prospect who grades well on the
- * things that matter for his spot IS a good prospect — the scouting report
- * and the truth are the same object seen at different resolutions.
- */
-export const POSITION_TRAITS = {
-  QB:   { arm: 0.24, acc: 0.28, poise: 0.22, field: 0.16, motor: 0.10 },
-  RB:   { speed: 0.20, burst: 0.22, agility: 0.18, power: 0.18, hands: 0.12, frame: 0.10 },
-  WR:   { speed: 0.20, hands: 0.24, route: 0.24, release: 0.16, burst: 0.16 },
-  TE:   { hands: 0.24, route: 0.18, block: 0.24, frame: 0.18, speed: 0.16 },
-  OL:   { block: 0.28, anchor: 0.26, pull: 0.16, frame: 0.16, motor: 0.14 },
-  EDGE: { rush: 0.30, burst: 0.20, shed: 0.18, motor: 0.18, frame: 0.14 },
-  DT:   { power: 0.26, shed: 0.24, anchor: 0.22, motor: 0.16, frame: 0.12 },
-  LB:   { tackle: 0.22, instinct: 0.24, cover: 0.18, speed: 0.18, shed: 0.18 },
-  CB:   { cover: 0.28, speed: 0.24, press: 0.18, instinct: 0.16, agility: 0.14 },
-  NB:   { cover: 0.26, agility: 0.22, instinct: 0.20, speed: 0.18, tackle: 0.14 },
-  S:    { range: 0.24, instinct: 0.24, tackle: 0.20, cover: 0.20, speed: 0.12 },
-};
 
 export const POSITION_GROUPS = {
   offense: [
@@ -78,13 +51,7 @@ export const POSITION_GROUPS = {
   ],
 };
 
-/** 0–99 to a letter, the way a scouting report reads. */
-export function grade(v) {
-  if (v >= 93) return 'A+'; if (v >= 87) return 'A'; if (v >= 82) return 'A-';
-  if (v >= 78) return 'B+'; if (v >= 73) return 'B'; if (v >= 68) return 'B-';
-  if (v >= 64) return 'C+'; if (v >= 58) return 'C'; if (v >= 53) return 'C-';
-  if (v >= 48) return 'D+'; if (v >= 42) return 'D'; return 'F';
-}
+export { grade } from './ratings.js';
 const GRADE_ORDER = ['F', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+'];
 export const gradeRank = (g) => GRADE_ORDER.indexOf(g);
 
@@ -153,8 +120,7 @@ export function makeClass(seed, year, used = new Set()) {
         gauss(rng, relevant ? level : level - 4, relevant ? spread : spread * 1.3), 25, 99));
     }
     // The overall is exactly the weighted blend of what matters at his spot.
-    const rating = Math.round(clamp(
-      Object.entries(weights).reduce((a, [k, w]) => a + traits[k] * w, 0), 40, 99));
+    const rating = ratingFromTraits(slot.pos, traits, level);
 
     const noise = clamp(gauss(rng, 8, 3), 3.5, 15);
     // Better prospects almost all attend; fringe players and the injured skip it.
@@ -167,6 +133,7 @@ export function makeClass(seed, year, used = new Set()) {
       school: SCHOOLS[Math.floor(rng() * SCHOOLS.length)],
       age: 21 + Math.floor(rng() * 3),
       traits, rating, noise,
+      development: developmentFromRng(mulberry32(hashSeed(`${seed}:dev:${year}:${i}`))),
       scouted: 0,
       combine: attends ? combineFor(traits, rng) : null,
       buzz: Math.round(clamp(rating + gauss(rng, 0, noise), 40, 99)),
@@ -191,11 +158,14 @@ export function makeFreeAgents(seed, year, used = new Set()) {
     const slot = UNIQUE_POS[Math.floor(rng() * UNIQUE_POS.length)];
     const age = 26 + Math.floor(rng() * 8);
     const rating = Math.round(clamp(gauss(rng, 76, 7), 58, 94));
+    const traitRng = mulberry32(hashSeed(`${seed}:fa-traits:${year}:${i}`));
     const decline = age >= 31 ? 3 + Math.round(rng() * 4) : age >= 29 ? 1 + Math.round(rng() * 2) : 0;
     out.push({
       id: `fa${year}-${i}`, name: drawName(rng, used),
       pos: slot.pos, side: slot.side, spot: slot.spot,
-      age, rating, decline,
+      age, rating, traits: traitsFromRating(slot.pos, rating, traitRng),
+      development: developmentFromRng(mulberry32(hashSeed(`${seed}:fa-dev:${year}:${i}`))),
+      decline,
       price: Math.round(clamp((rating - 55) * 1.6 - decline * 2, 4, 60)),
     });
   }
@@ -319,7 +289,12 @@ export function addToRoster(roster, player) {
     return { roster, replaced: null, kept: false, madeRoster: false };
   }
 
+  const traitKeys = Object.keys(POSITION_TRAITS[player.pos] || {});
+  const traits = player.traits && Object.fromEntries(traitKeys
+    .filter((key) => Number.isFinite(player.traits[key])).map((key) => [key, player.traits[key]]));
   list[worst.i] = { ...worst.cur, name: player.name, rating: player.rating,
+    ...(traits && Object.keys(traits).length ? { traits } : {}),
+    development: player.development || 'normal',
     age: player.age, acquired: player.id, draftedIn: player.draftedIn ?? null };
   // Best man at the position holds the starting spot.
   const regroup = list.map((cur, i) => ({ cur, i })).filter(({ cur }) => cur.pos === player.pos);
@@ -388,19 +363,30 @@ export function cpuPick(available, roster, rng) {
 /* ------------------------------------------------------------ progression */
 
 export function ageRoster(roster, seed, year) {
-  const rng = mulberry32(hashSeed(`${seed}:age:${year}`));
   const step = (list) => list.map((p) => {
     const age = (p.age || 26) + 1;
     // Ageing runs after the draft, so the flag cannot simply be stripped here
     // or it would clear the class that just arrived. Stamp the year instead
     // and let the roster page decide who still counts as a rookie.
     const rest = p;
-    let delta;
-    if (age <= 24) delta = gauss(rng, 2.0, 2.0);
-    else if (age <= 27) delta = gauss(rng, 0.5, 1.8);
-    else if (age <= 30) delta = gauss(rng, -0.9, 1.8);
-    else delta = gauss(rng, -3.1, 2.2);
-    return { ...rest, age, rating: Math.round(clamp(p.rating + delta, 45, 99)) };
+    const mean = age <= 24 ? 2.0 : age <= 27 ? 0.5 : age <= 30 ? -0.9 : -3.1;
+    const sd = age <= 24 ? 2.0 : age <= 30 ? 1.8 : 2.2;
+    const dev = p.development === 'quick' ? 1.30 : p.development === 'slow' ? 0.72 : 1;
+    const baseTraits = p.traits || traitsFromRating(p.pos, p.rating,
+      mulberry32(hashSeed(`${seed}:age-migrate:${year}:${p.name}`)));
+    if (!baseTraits) {
+      const rng = mulberry32(hashSeed(`${seed}:age:${year}:${p.name}:overall`));
+      const delta = gauss(rng, mean > 0 ? mean * dev : mean, sd);
+      return { ...rest, age, development: p.development || 'normal',
+        rating: Math.round(clamp(p.rating + delta, 45, 99)) };
+    }
+    const traits = Object.fromEntries(Object.entries(baseTraits).map(([key, value]) => {
+      const rng = mulberry32(hashSeed(`${seed}:age:${year}:${p.name}:${key}`));
+      const delta = gauss(rng, mean > 0 ? mean * dev : mean, sd);
+      return [key, Math.round(clamp(value + delta, 35, 99))];
+    }));
+    return { ...rest, age, traits, development: p.development || 'normal',
+      rating: ratingFromTraits(p.pos, traits, p.rating) };
   });
   return { offense: step(roster.offense), defense: step(roster.defense) };
 }
