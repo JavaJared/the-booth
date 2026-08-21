@@ -531,7 +531,7 @@ assert.equal(thirdMedium[0].callId, 'mesh');
 assert.equal(thirdMedium[0].ypp, 12,
   'last-game film should preserve a call\'s actual effectiveness');
 const unlockedFilm = unlockFilmOverlay(detailedFilm, 'DC', filmThem, 'mesh');
-assert.equal(unlockedFilm.filmOverlays.DC.includes(`${filmThem}:mesh`), true);
+assert.equal(unlockedFilm.filmOverlays.DC.includes('mesh'), true);
 assert.equal(unlockedFilm.filmBank.DC,
   detailedFilm.filmBank.DC - FILM_OVERLAY_COST,
   'unlocking an opponent diagram should spend the configured film cost');
@@ -548,16 +548,35 @@ const unseenCall = OFFENSE.find((p) => !p.custom
     .some((calls) => calls?.[p.id]));
 assert.ok(unseenCall, 'fixture should include an unobserved built-in opponent call');
 const designerUnlock = unlockFilmOverlay(designerFilm, 'DC', designerOpponent, unseenCall.id);
-assert.equal(designerUnlock.filmOverlays.DC.includes(`${designerOpponent}:${unseenCall.id}`), true,
+assert.equal(designerUnlock.filmOverlays.DC.includes(unseenCall.id), true,
   'the upcoming opponent\'s default calls should unlock directly from the designer');
 
 designerFilm.filmBank.OC = FILM_OVERLAY_COST;
 const unseenDefense = DEFENSE.find((p) => !p.custom);
 const offenseUnlock = unlockFilmOverlay(designerFilm, 'OC', designerOpponent, unseenDefense.id);
-assert.equal(offenseUnlock.filmOverlays.OC.includes(`${designerOpponent}:${unseenDefense.id}`), true,
+assert.equal(offenseUnlock.filmOverlays.OC.includes(unseenDefense.id), true,
   'the OC should unlock an opponent defense directly from the offensive designer');
 assert.equal(offenseUnlock.filmBank.OC, 0,
   'an offensive overlay should spend the same film cost');
+
+const migratedOverlay = hydrate({
+  ...dehydrate(designerFilm),
+  filmOverlays: { OC: [`${designerOpponent}:${unseenDefense.id}`], DC: [
+    `${designerOpponent}:${unseenCall.id}`,
+  ] },
+});
+assert.deepEqual(migratedOverlay.filmOverlays.OC, [unseenDefense.id],
+  'legacy opponent-scoped offensive overlays should migrate to permanent concept ownership');
+assert.deepEqual(migratedOverlay.filmOverlays.DC, [unseenCall.id],
+  'legacy opponent-scoped defensive overlays should migrate to permanent concept ownership');
+const otherGame = migratedOverlay.schedule.games.find((game) =>
+  (game.home === filmUs || game.away === filmUs)
+  && game.home !== designerOpponent && game.away !== designerOpponent);
+const otherOpponent = otherGame.home === filmUs ? otherGame.away : otherGame.home;
+const revisitedOverlay = { ...migratedOverlay, week: otherGame.week };
+const alreadyOwned = unlockFilmOverlay(revisitedOverlay, 'DC', otherOpponent, unseenCall.id);
+assert.equal(alreadyOwned, revisitedOverlay,
+  'a concept bought against one opponent should not charge film again against another');
 
 for (const play of OFFENSE.filter((p) => !p.custom)) {
   assert.ok(Object.keys(opponentDiagram(play.id)?.paths || {}).length,

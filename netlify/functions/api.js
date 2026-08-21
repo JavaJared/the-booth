@@ -15,7 +15,8 @@ import { createSeason, hydrate, dehydrate, userGame, liveConfig, statsFromPlays,
   setWeekReady, canAdvanceWeek, weekReadyBoth,
   openScouting, useScout, toggleBoard, signFreeAgent, boardViews,
   startDraft, advocate, runPicks, isOurPick, record as seasonRecord,
-  weekLabel, finishedGameRecorded, recordGameFilm, unlockFilmOverlay } from '../../public/shared/season.js';
+  weekLabel, finishedGameRecorded, recordGameFilm, unlockFilmOverlay,
+  filmOverlayKey } from '../../public/shared/season.js';
 import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
@@ -429,7 +430,7 @@ const actions = {
         filmVersion: next.filmVersion,
         filmOverlays: next.filmOverlays,
       });
-      return { balance: next.filmBank[seat], key: `${teamId}:${callId}` };
+      return { balance: next.filmBank[seat], key: filmOverlayKey(callId) };
     });
   },
 

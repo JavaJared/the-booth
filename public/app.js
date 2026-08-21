@@ -11,7 +11,7 @@ import { advanceWeek, simRemainingWeek, userGame, nextUserGame, record as season
   useScout, toggleBoard, signFreeAgent, startDraft, advocate, runPicks,
   onTheClock, isOurPick, ADVOCACY, BOARD_MAX, SCOUT_POINTS, ROUNDS, careerResume,
   setOffseasonReady, advanceOffseason, bothReady, nextSeason,
-  interviewQuestions, recordGameFilm, unlockFilmOverlay } from './shared/season.js';
+  interviewQuestions, recordGameFilm, unlockFilmOverlay, filmOverlayKey } from './shared/season.js';
 import { resumeScore, archetypeOf } from './shared/carousel.js';
 import { POSITION_GROUPS, DRILL_LABEL, gradeRank } from './shared/draft.js';
 import { depthChart, rosterNeeds, unitSummary as rosterUnit } from './shared/depth.js';
@@ -646,7 +646,7 @@ function renderDesignerFilmControls() {
 
   const balance = app.season.filmBank?.[app.seat] || 0;
   const unlocked = new Set(app.season.filmOverlays?.[app.seat] || []);
-  const key = DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
+  const key = filmOverlayKey(DZ.filmCallId);
   const owns = key && unlocked.has(key);
   const action = $('dz-film-action');
   action.textContent = !DZ.filmCallId ? 'Select a play'
@@ -1036,7 +1036,7 @@ $('dz-overlay-clear').addEventListener('click', () => {
 $('dz-film-select').addEventListener('change', (e) => {
   DZ.filmCallId = e.target.value;
   const context = designerFilmContext();
-  const key = context && DZ.filmCallId && `${context.teamId}:${DZ.filmCallId}`;
+  const key = context && filmOverlayKey(DZ.filmCallId);
   const unlocked = new Set(app.season?.filmOverlays?.[app.seat] || []);
   DZ.overlay = key && unlocked.has(key)
     ? { teamId: context.teamId, callId: DZ.filmCallId, unit: context.unit } : null;
@@ -1048,7 +1048,7 @@ $('dz-film-action').addEventListener('click', async () => {
   const context = designerFilmContext();
   const callId = DZ.filmCallId;
   if (!context || !callId) return;
-  const key = `${context.teamId}:${callId}`;
+  const key = filmOverlayKey(callId);
   const owns = (app.season.filmOverlays?.[app.seat] || []).includes(key);
   if (!owns) {
     button.disabled = true;
@@ -1249,6 +1249,7 @@ const link = {
       const next = unlockFilmOverlay(app.season, app.seat, teamId, callId);
       if (next === app.season) throw new Error('That overlay is unavailable or you need more film.');
       app.season = next;
+      saveSeason();
       renderSeason();
       return;
     }
@@ -1696,7 +1697,7 @@ function filmSituationTable(S, teamId, unit, situation, { previous = false } = {
   const unlocked = new Set(S.filmOverlays?.[app.seat] || []);
   const balance = S.filmBank?.[app.seat] || 0;
   const cells = rows.map((row) => {
-    const key = `${teamId}:${row.callId}`;
+    const key = filmOverlayKey(row.callId);
     let action = '';
     if ((app.seat === 'DC' && unit === 'offense') || (app.seat === 'OC' && unit === 'defense')) {
       action = unlocked.has(key)

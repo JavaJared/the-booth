@@ -74,7 +74,14 @@ export function hydrate(saved) {
   }
   saved.filmVersion = 2;
   saved.filmBank = { OC: 0, DC: 0, ...saved.filmBank };
-  saved.filmOverlays = { OC: [], DC: [], ...(saved.filmOverlays || {}) };
+  saved.filmOverlays = Object.fromEntries(['OC', 'DC'].map((seat) => [seat,
+    // Early overlay saves tied ownership to the opponent (`team:call`). The
+    // diagram is a property of the call, though, so changing opponents made a
+    // purchased concept look locked again. Collapse those legacy keys to the
+    // call id and keep the unlock permanently available against every club.
+    [...new Set((saved.filmOverlays?.[seat] || []).map((key) =>
+      String(key).includes(':') ? String(key).split(':').slice(1).join(':') : String(key)))],
+  ]));
   registerSeasonCalls(saved);
   const ids = TEAMS.map((t) => t.id);
   // Generated from the seed on year one, then carried forward: once players can
@@ -213,10 +220,13 @@ export function filmOverlayAvailable(season, seat, teamId, callId) {
   return hasCall(season.filmBook, teamId, unit, callId) || upcoming === teamId;
 }
 
+/** Overlay ownership follows the diagrammed concept, not a particular club. */
+export const filmOverlayKey = (callId) => String(callId || '');
+
 /** Buy permanent access to one opponent concept in the defensive designer. */
 export function unlockFilmOverlay(season, seat, teamId, callId) {
   if (!filmOverlayAvailable(season, seat, teamId, callId)) return season;
-  const key = `${teamId}:${callId}`;
+  const key = filmOverlayKey(callId);
   const unlocked = season.filmOverlays?.[seat] || [];
   if (unlocked.includes(key)) return season;
   const balance = season.filmBank?.[seat] || 0;
