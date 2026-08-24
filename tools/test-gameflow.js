@@ -4,10 +4,10 @@ import {
 } from '../public/shared/engine.js';
 import { runToNextDecision } from '../public/shared/gameflow.js';
 import {
-  OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID, registerCustomPlays,
+  OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID, registerCustomPlays, registerCustomDefenses,
   registerSeasonCalls, seasonCallIds,
 } from '../public/shared/playbook.js';
-import { derivePlay, deriveDefense } from '../public/shared/designer.js';
+import { derivePlay, deriveDefense, setManAssignment } from '../public/shared/designer.js';
 import { spatialMatchup } from '../public/shared/spatial.js';
 import { INVITE_ALPHABET, inviteCode, normalizeInviteCode } from '../public/shared/codes.js';
 import {
@@ -25,7 +25,7 @@ import {
 } from '../public/shared/season.js';
 import { TEAMS } from '../public/shared/league.js';
 import {
-  DEF_SPOTS, assignmentTraits, offensivePlayFit, talentMatchup,
+  DEF_SPOTS, assignmentTraits, coverDefender, offensivePlayFit, talentMatchup,
 } from '../public/shared/roster.js';
 import {
   ageDevelopmentMultiplier, developmentTrajectory, ratingFromTraits, traitScore, traitXpCost,
@@ -702,5 +702,53 @@ assert.deepEqual(drawnZone.geometry.paths.S1.at(-1), { x: 16, y: 20 },
   'a custom defense should preserve its exact zone landmarks');
 assert.notEqual(spatialMatchup(OFF_BY_ID.mesh, drawnZone).edge, 0,
   'built-in offense should be spatially evaluated against a drawn defense');
+
+let explicitMan = setManAssignment({}, 'CB2', 'WR1');
+explicitMan = setManAssignment(explicitMan, 'NB', 'WR1');
+assert.deepEqual(explicitMan, { NB: 'WR1' },
+  'reassigning a receiver should replace his old primary defender');
+explicitMan = setManAssignment(explicitMan, 'NB', 'TE1');
+assert.deepEqual(explicitMan, { NB: 'TE1' },
+  'reassigning a defender should replace his old receiver');
+
+const drawnMatch = deriveDefense({
+  id: 'drawn-match', name: 'Drawn Match', positions: {}, man: false,
+  offensePers: '11', manAssignments: { CB2: 'WR1' },
+  paths: {
+    EDGE1: [[17, 1], [17, -3]], DT1: [[23, 1], [23, -3]],
+    DT2: [[30, 1], [30, -3]], EDGE2: [[36, 1], [36, -3]],
+    S1: [[20, 13], [16, 20]], S2: [[34, 13], [38, 20]],
+  },
+});
+assert.deepEqual(drawnMatch.geometry.manAssignments, { CB2: 'WR1' },
+  'a custom defense should preserve exact defender-to-receiver matchups');
+assert.equal(drawnMatch.structure.manCount, 1,
+  'the defense readout should count explicit man assignments');
+const matchupDefense = statSeason.rosters[TEAMS[1].id].defense;
+assert.equal(coverDefender('WR1', drawnMatch, matchupDefense)?.spot, 'CB2',
+  'the live talent resolver should use the defender selected in the designer');
+assert.ok(Number.isFinite(spatialMatchup(OFF_BY_ID.mesh, drawnMatch).reads.WR1),
+  'route geometry should evaluate an explicit man matchup alongside remaining zones');
+registerCustomDefenses([drawnMatch]);
+const assignmentTargetPlay = {
+  ...OFF_BY_ID.slants, id: 'assignment-target', name: 'Assignment Target',
+  custom: true, targets: { WR1: 100 },
+};
+registerCustomPlays([assignmentTargetPlay]);
+const assignedSnap = resolveSnap(newGameState({ firstPossession: 'US' }), assignmentTargetPlay.id, drawnMatch.id,
+  () => 0.99, emptyTendencies(), {
+    offRoster: statSeason.rosters[statSeason.userTeam].offense,
+    defRoster: matchupDefense,
+  });
+assert.equal(assignedSnap.playerMatchup.defense.player,
+  matchupDefense.find((player) => player.spot === 'CB2').name,
+  'the snap resolver should grade the receiver against his explicitly assigned defender');
+
+const drawnManShell = deriveDefense({
+  id: 'drawn-man-shell', name: 'Drawn Man Shell', positions: {}, man: false,
+  manAssignments: { CB1: 'WR1', CB2: 'WR2', NB: 'WR3' }, paths: {},
+});
+assert.equal(drawnManShell.cov, 'man1',
+  'three explicit receiver matchups should compile into a man coverage shell');
 
 console.log('Regression tests passed.');

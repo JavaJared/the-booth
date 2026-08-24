@@ -261,7 +261,9 @@ export function coverDefender(targetSpot, def, defRoster) {
   // The same defender owns the receiver either way, so box-score credit stays
   // coherent. Zone softens the matchup in talentEdge instead of randomising
   // who covered him, which was mostly adding noise.
-  return bySpot(defRoster)[MAN_ASSIGN[targetSpot] || 'S1'];
+  const explicit = Object.entries(def?.geometry?.manAssignments || {})
+    .find(([, receiver]) => receiver === targetSpot)?.[0];
+  return bySpot(defRoster)[explicit || MAN_ASSIGN[targetSpot] || 'S1'];
 }
 
 /** In zone nobody owns a receiver alone, so his cover man's rating is blended

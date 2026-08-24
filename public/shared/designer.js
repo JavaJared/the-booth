@@ -417,10 +417,23 @@ export const DEF_ALIGN = {
 };
 const FRONT = ['EDGE1', 'EDGE2', 'DT1', 'DT2'];
 
+/** One receiver has one primary man defender. Reassigning either side replaces
+ * the old pairing rather than silently creating an accidental double-team. */
+export function setManAssignment(assignments = {}, defender, receiver) {
+  const next = Object.fromEntries(Object.entries(assignments)
+    .filter(([d, r]) => d !== defender && r !== receiver));
+  if (defender && receiver) next[defender] = receiver;
+  return next;
+}
+
 export function readDefense(design) {
   const pos = { ...DEF_ALIGN, ...(design.positions || {}) };
   const paths = design.paths || {};
-  const man = !!design.man;
+  const manAssignments = { ...(design.manAssignments || {}) };
+  const manDefenders = new Set(Object.keys(manAssignments));
+  // Three explicit matchups are enough for the aggregate shell to play like
+  // man coverage. One or two remain a mixed match-zone call.
+  const man = !!design.man || manDefenders.size >= 3;
 
   // A defender's job comes from what he was drawn doing. A path that crosses
   // the line is a blitz; one that ends behind it is a zone drop, and how deep
@@ -428,6 +441,7 @@ export function readDefense(design) {
   const rushers = new Set();
   const drops = {};
   for (const [spot, pts] of Object.entries(paths)) {
+    if (manDefenders.has(spot)) continue;
     if (!pts || pts.length < 2) continue;
     const end = pts[pts.length - 1];
     if (end[1] <= 0.8) rushers.add(spot);
@@ -436,6 +450,7 @@ export function readDefense(design) {
   // Anyone without a drawn assignment rushes if he is on the line.
   for (const [spot, p] of Object.entries(pos)) {
     if (paths[spot]?.length >= 2) continue;
+    if (manDefenders.has(spot)) continue;
     if (p[1] <= 1.5 && FRONT.includes(spot)) rushers.add(spot);
   }
 
@@ -471,6 +486,7 @@ export function readDefense(design) {
   else cov = 'cover3';
 
   return { cov, deep, deepLB, box: inTheBox, rush: rushers.size, press, man,
+    manCount: manDefenders.size, manAssignments,
     rushers: [...rushers], drops: Object.keys(drops).length };
 }
 
@@ -496,6 +512,8 @@ export function deriveDefense(design) {
       paths: Object.fromEntries(Object.entries(design.paths || {})
         .map(([spot, points]) => [spot, compactPath(points)])),
       man: !!design.man,
+      manAssignments: { ...(design.manAssignments || {}) },
+      offensePers: FORMATIONS[design.offensePers] ? design.offensePers : '11',
     },
     structure: d,
   };

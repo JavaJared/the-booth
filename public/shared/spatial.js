@@ -77,15 +77,19 @@ export function defenseGeometry(call) {
   if (call.geometry?.paths) {
     const spots = { ...DEF_ALIGN, ...(call.geometry.spots || call.geometry.positions || {}) };
     const paths = clonePaths(call.geometry.paths);
-    const rushers = Object.entries(paths).filter(([, points]) => last(points)?.[1] <= 0.8)
+    const manAssignments = { ...(call.geometry.manAssignments || {}) };
+    const assigned = new Set(Object.keys(manAssignments));
+    const rushers = Object.entries(paths).filter(([spot, points]) =>
+      !assigned.has(spot) && last(points)?.[1] <= 0.8)
       .map(([spot]) => spot);
     for (const spot of FRONT) {
-      if (!paths[spot] && spots[spot]?.[1] <= 1.5) rushers.push(spot);
+      if (!paths[spot] && !assigned.has(spot) && spots[spot]?.[1] <= 1.5) rushers.push(spot);
     }
     const uniqueRushers = [...new Set(rushers)];
     const man = call.geometry.man ?? call.cov?.startsWith('man');
-    const zones = man ? [] : Object.keys(spots).filter((spot) => !uniqueRushers.includes(spot));
-    return { type: 'defense', spots, paths, rushers: uniqueRushers, zones, man };
+    const zones = man ? [] : Object.keys(spots)
+      .filter((spot) => !uniqueRushers.includes(spot) && !assigned.has(spot));
+    return { type: 'defense', spots, paths, rushers: uniqueRushers, zones, man, manAssignments };
   }
 
   const spots = { ...DEF_ALIGN }, paths = {};
@@ -182,12 +186,42 @@ function protectionEdge(offense, defense) {
   return edge;
 }
 
+function zoneRead(route, defense) {
+  const zones = defense.zones.map((spot) => zoneAt(defense, spot));
+  if (!zones.length) return 0;
+  const windows = samplePath(route).filter((p) => p[1] >= 2.5);
+  let best = -1;
+  for (const point of windows) {
+    const nearest = Math.min(...zones.map((z) => Math.hypot(
+      (point[0] - z.point[0]) / z.rx, (point[1] - z.point[1]) / z.ry)));
+    best = Math.max(best, clamp((nearest - 0.9) / 0.9, -1, 1));
+  }
+  return best;
+}
+
+function matchedTrack(route, receiverStart, defenderStart) {
+  if (!route?.length || !defenderStart) return null;
+  const side = Math.sign((defenderStart[0] || 0) - (receiverStart?.[0] || 0));
+  const leverage = side * Math.min(2, Math.abs((defenderStart[0] || 0) - (receiverStart?.[0] || 0)) * 0.2);
+  return route.map((point, index) => index === 0 ? defenderStart
+    : [point[0] + leverage, point[1] + 1.5]);
+}
+
 function manSpatial(off, offense, defense) {
   const reads = {};
+  const explicitFor = Object.fromEntries(Object.entries(defense.manAssignments || {})
+    .map(([defender, receiver]) => [receiver, defender]));
   for (const [spot, route] of Object.entries(offense.paths)) {
     if (spot in OL_SPOTS || route.length < 2) continue;
-    const defender = MAN_ASSIGN[spot];
-    const track = defense.paths[defender] || [defense.spots[defender]];
+    const explicit = explicitFor[spot];
+    const defender = explicit || (defense.man ? MAN_ASSIGN[spot] : null);
+    if (!defender) {
+      reads[spot] = zoneRead(route, defense);
+      continue;
+    }
+    const track = defense.paths[defender]
+      || (explicit ? matchedTrack(route, offense.spots[spot], defense.spots[defender]) : null)
+      || [defense.spots[defender]];
     let separation = 0;
     for (const share of [0.5, 0.65, 0.8, 0.92, 1]) {
       const receiverAt = pointAt(route, share), defenderAt = pointAt(track, share);
@@ -209,22 +243,16 @@ function passSpatial(off, def, offense, defense) {
   if (!Object.keys(offense.paths).length) {
     return { edge: 0, pressure: 0, targetWeights: off.targets || {}, reads: {} };
   }
-  if (defense.man) return manSpatial(off, offense, defense);
+  if (defense.man || Object.keys(defense.manAssignments || {}).length) {
+    return manSpatial(off, offense, defense);
+  }
   if (!defense.zones.length) return {
     edge: 0, pressure: 0, targetWeights: off.targets || {}, reads: {},
   };
-  const zones = defense.zones.map((spot) => zoneAt(defense, spot));
   const reads = {};
   for (const [spot, route] of Object.entries(offense.paths)) {
     if (spot in OL_SPOTS || route.length < 2) continue;
-    const windows = samplePath(route).filter((p) => p[1] >= 2.5);
-    let best = -1;
-    for (const point of windows) {
-      const nearest = Math.min(...zones.map((z) => Math.hypot(
-        (point[0] - z.point[0]) / z.rx, (point[1] - z.point[1]) / z.ry)));
-      best = Math.max(best, clamp((nearest - 0.9) / 0.9, -1, 1));
-    }
-    reads[spot] = best;
+    reads[spot] = zoneRead(route, defense);
   }
   const bestReads = Object.values(reads).sort((a, b) => b - a).slice(0, 2);
   const space = bestReads.length ? bestReads.reduce((a, b) => a + b, 0) / bestReads.length : 0;

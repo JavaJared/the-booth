@@ -18,7 +18,8 @@ import { POSITION_GROUPS, DRILL_LABEL, gradeRank } from './shared/draft.js';
 import { depthChart, rosterNeeds, unitSummary as rosterUnit } from './shared/depth.js';
 import { seasonAwards } from './shared/awards.js';
 import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute,
-  OL_SPOTS, runSpots, DEF_ALIGN, deriveRun, deriveDefense, readRun, readDefense } from './shared/designer.js';
+  OL_SPOTS, runSpots, DEF_ALIGN, deriveRun, deriveDefense, readRun, readDefense,
+  setManAssignment } from './shared/designer.js';
 import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
 import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
@@ -602,6 +603,7 @@ function show(id) {
 
 const DZ = { mode: 'pass', pers: '11', sel: null, routes: {}, pa: false,
   carrier: [], carrierSpot: 'RB1', blocks: {}, blockers: [], dpos: {}, paths: {}, man: false,
+  manAssignments: {}, manPending: null,
   overlay: null, filmCallId: '' };
 const DZ_W = 60, DZ_H = 46, DZ_LOS = 34;          // viewBox units
 const fx = (x) => 3 + (x / FIELD_W) * (DZ_W - 6);  // field x -> svg x
@@ -677,17 +679,19 @@ function openDesigner() {
   $('dz-modes').querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
     DZ.mode = t.dataset.mode;
     DZ.sel = null; DZ.routes = {}; DZ.carrier = []; DZ.carrierSpot = 'RB1';
-    DZ.blocks = {}; DZ.blockers = []; DZ.paths = {};
+    DZ.blocks = {}; DZ.blockers = []; DZ.paths = {}; DZ.manAssignments = {}; DZ.manPending = null;
     openDesigner();
   }));
   $('dz-pers').closest('.dz-controls').querySelectorAll('.dz-check')
     .forEach((c) => { c.hidden = DZ.mode !== 'pass'; });
-  // Personnel groupings are an offensive idea; the defence has no use for them.
-  $('dz-pers').closest('.form-field').hidden = DZ.mode === 'def';
+  // On defense this chooses which eligible opponents appear for man matchups.
+  $('dz-pers').closest('.form-field').hidden = false;
+  $('dz-pers').closest('.form-field').querySelector('span').textContent =
+    DZ.mode === 'def' ? 'Opponent personnel' : 'Personnel';
   $('dz-hint').textContent = {
     pass: 'Pick a receiver, then click downfield to draw his route. Click him again to keep him in to block.',
     run: 'The circled player has the ball. Draw his path, then send everyone else to a block. Click a back or receiver twice to hand him the ball instead.',
-    def: 'Pick a defender, then draw where he goes. Across the line is a blitz; anywhere behind it is his zone.',
+    def: 'Pick a defender and draw his rush or zone. Click the selected defender again, then choose the WR, TE, or RB he covers.',
   }[DZ.mode];
   const overlay = overlayDiagram();
   $('dz-overlay-note').hidden = !overlay;
@@ -829,6 +833,7 @@ function drawDesigner() {
     itself from how many are deep and how the backs are playing it. */
 function drawDefense() {
   const pos = { ...DEF_ALIGN, ...DZ.dpos };
+  const eligible = FORMATIONS[DZ.pers]?.spots || FORMATIONS['11'].spots;
   const p = [];
   p.push(`<svg viewBox="0 0 ${DZ_W} ${DZ_H}" class="dz-field" xmlns="http://www.w3.org/2000/svg">`);
   for (let y = -5; y <= 30; y += 5) {
@@ -839,6 +844,11 @@ function drawDefense() {
   appendFilmOverlaySvg(p);
   const read = readDefense(defDesign());
   const rushing = new Set(read.rushers);
+  for (const [defender, receiver] of Object.entries(DZ.manAssignments)) {
+    const from = pos[defender], to = eligible[receiver];
+    if (!from || !to) continue;
+    p.push(`<line x1="${fx(from[0])}" y1="${fy(from[1])}" x2="${fx(to[0])}" y2="${fy(to[1])}" class="dz-man-link"/>`);
+  }
   for (const [spot, pts] of Object.entries(DZ.paths)) {
     if (!pts || pts.length < 2) continue;
     const svgPts = pts.map((q) => [fx(q[0]), fy(q[1])]);
@@ -857,9 +867,17 @@ function drawDefense() {
   for (const [spot, q] of Object.entries(pos)) {
     const cls = ['dz-spot',
       rushing.has(spot) ? 'dz-rusher' : DZ.paths[spot]?.length > 1 ? 'has' : '',
+      DZ.manAssignments[spot] ? 'dz-man' : '',
+      DZ.manPending === spot ? 'dz-man-pending' : '',
       DZ.sel === spot ? 'on' : ''].filter(Boolean).join(' ');
     p.push(`<circle cx="${fx(q[0])}" cy="${fy(q[1])}" r="1.5" class="${cls}" data-spot="${spot}"/>`);
     p.push(`<text x="${fx(q[0])}" y="${fy(q[1]) + 3.6}" class="dz-label">${spot}</text>`);
+  }
+  for (const [spot, q] of Object.entries(eligible)) {
+    const assigned = Object.values(DZ.manAssignments).includes(spot);
+    const waiting = !!DZ.manPending;
+    p.push(`<rect x="${fx(q[0]) - 1.4}" y="${fy(q[1]) - 1.4}" width="2.8" height="2.8" rx=".35" class="dz-man-target${assigned ? ' assigned' : ''}${waiting ? ' waiting' : ''}" data-target="${spot}"/>`);
+    p.push(`<text x="${fx(q[0])}" y="${fy(q[1]) - 2.2}" class="dz-target-label">${spot}</text>`);
   }
   p.push('</svg>');
   $('dz-field').innerHTML = p.join('');
@@ -868,18 +886,42 @@ function drawDefense() {
   svg.querySelectorAll('.dz-spot').forEach((c) => c.addEventListener('click', (e) => {
     e.stopPropagation();
     const spot = c.dataset.spot;
-    // Clicking a selected defender again wipes his assignment and lets you
-    // redraw it, which is quicker than undoing point by point.
-    if (DZ.sel === spot) delete DZ.paths[spot];
-    else DZ.sel = spot;
+    if (DZ.sel === spot) {
+      // The second click changes the interaction from drawing a path to
+      // choosing the eligible player this defender owns.
+      delete DZ.paths[spot];
+      DZ.manPending = spot;
+      $('dz-hint').textContent = `Now choose the WR, TE, or RB for ${spot}.`;
+    } else {
+      DZ.sel = spot;
+      DZ.manPending = null;
+    }
+    drawDesigner();
+  }));
+  svg.querySelectorAll('.dz-man-target').forEach((target) => target.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!DZ.manPending) {
+      $('dz-hint').textContent = 'Click a selected defender again before choosing his matchup.';
+      return;
+    }
+    const defender = DZ.manPending;
+    DZ.manAssignments = setManAssignment(DZ.manAssignments, defender, target.dataset.target);
+    delete DZ.paths[defender];
+    DZ.sel = defender;
+    DZ.manPending = null;
     drawDesigner();
   }));
   svg.addEventListener('click', (e) => {
     if (!DZ.sel) { $('dz-hint').textContent = 'Pick a defender first, then draw where he goes.'; return; }
+    if (DZ.manPending) {
+      $('dz-hint').textContent = 'Choose a WR, TE, or RB, or select another defender.';
+      return;
+    }
     const r = svg.getBoundingClientRect();
     const pt = [+ux(((e.clientX - r.left) / r.width) * DZ_W).toFixed(1),
                 +uy(((e.clientY - r.top) / r.height) * DZ_H).toFixed(1)];
     const base = { ...DEF_ALIGN, ...DZ.dpos }[DZ.sel];
+    delete DZ.manAssignments[DZ.sel];
     DZ.paths[DZ.sel] = [...(DZ.paths[DZ.sel]?.length ? DZ.paths[DZ.sel] : [base]), pt];
     drawDesigner();
   });
@@ -1001,7 +1043,8 @@ function readRunPanel() {
 
 function defDesign() {
   return { id: 'd' + Date.now(), name: $('dz-name').value,
-    positions: DZ.dpos, paths: DZ.paths, man: DZ.man };
+    positions: DZ.dpos, paths: DZ.paths, man: DZ.man,
+    manAssignments: DZ.manAssignments, offensePers: DZ.pers };
 }
 const COV_LABEL = { man0: 'Cover 0', man1: 'Cover 1', cover2: 'Cover 2',
   tampa2: 'Tampa 2', cover3: 'Cover 3', quarters: 'Quarters', cover6: 'Cover 6' };
@@ -1021,12 +1064,16 @@ function readDefensePanel() {
       ['Exact design', `${exact >= 0 ? '+' : ''}${exact.toFixed(3)}`],
     ])}` : '')
     + personnelFitHtml(fit)
-    + `<label class="dz-check" style="margin:.6rem 0"><input type="checkbox" id="dz-man"${DZ.man ? ' checked' : ''}> Backs play man</label>`
+    + `<label class="dz-check" style="margin:.6rem 0"><input type="checkbox" id="dz-man"${DZ.man ? ' checked' : ''}> Default remaining backs to man</label>`
     + '<div class="dz-read"><h4>Structure</h4></div>'
     + table(['', ''], [
         ['Deep defenders', `${d.deep}`], ['In the box', `${d.box}`],
         ['Rushers', `${d.rush}`], ['Press coverage', `${d.press}`],
+        ['Man assignments', `${d.manCount || 0}`],
       ])
+    + (Object.keys(DZ.manAssignments).length
+      ? '<div class="dz-read"><h4>Matchups</h4></div>'
+        + table(['Defender', 'Covers'], Object.entries(DZ.manAssignments)) : '')
     + '<div class="dz-read"><h4>How it grades</h4></div>'
     + table(['', ''], [
         ['Personnel', call.pers],
@@ -1036,7 +1083,19 @@ function readDefensePanel() {
   if (cb) cb.addEventListener('change', (e) => { DZ.man = e.target.checked; readDesigner(); });
 }
 
-$('dz-pers').addEventListener('change', (e) => { DZ.pers = e.target.value; DZ.routes = {}; DZ.sel = null; drawDesigner(); });
+$('dz-pers').addEventListener('change', (e) => {
+  DZ.pers = e.target.value;
+  if (DZ.mode === 'def') {
+    const eligible = new Set(Object.keys(FORMATIONS[DZ.pers]?.spots || {}));
+    DZ.manAssignments = Object.fromEntries(Object.entries(DZ.manAssignments)
+      .filter(([, receiver]) => eligible.has(receiver)));
+    DZ.manPending = null;
+  } else {
+    DZ.routes = {};
+    DZ.sel = null;
+  }
+  drawDesigner();
+});
 $('dz-pa').addEventListener('change', (e) => { DZ.pa = e.target.checked; readDesigner(); });
 $('dz-name').addEventListener('input', readDesigner);
 $('dz-overlay-clear').addEventListener('click', () => {
@@ -1092,7 +1151,13 @@ $('dz-undo').addEventListener('click', () => {
 $('dz-clear').addEventListener('click', () => {
   const box = activePaths();
   if (box === null) DZ.carrier = [];
-  else if (DZ.sel) delete box[DZ.sel];
+  else if (DZ.sel) {
+    delete box[DZ.sel];
+    if (DZ.mode === 'def') {
+      delete DZ.manAssignments[DZ.sel];
+      DZ.manPending = null;
+    }
+  }
   drawDesigner();
 });
 $('dz-close').addEventListener('click', () => { show(app.season ? 'season' : 'setup'); if (app.season) renderSeason(); });
@@ -1733,6 +1798,8 @@ function openOpponentFilm(teamId, callId) {
     DZ.paths = {};
     DZ.dpos = {};
     DZ.man = false;
+    DZ.manAssignments = {};
+    DZ.manPending = null;
   } else {
     DZ.routes = {};
     DZ.blocks = {};

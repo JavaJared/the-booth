@@ -536,8 +536,16 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
 .dz-spot{fill:var(--pad);stroke:var(--ink);stroke-width:.3;cursor:pointer}
 .dz-spot.on{stroke:var(--pencil);stroke-width:.75}
 .dz-spot.has{fill:var(--ink)}
+.dz-spot.dz-man{fill:var(--los);stroke:var(--ink)}
+.dz-spot.dz-man-pending{stroke:var(--pencil);stroke-width:.8;stroke-dasharray:.55 .35}
 .dz-label{fill:var(--ink);font-family:var(--cond);font-size:1.5px;text-anchor:middle;
   pointer-events:none;font-weight:600}
+.dz-man-link{stroke:var(--los);stroke-width:.34;stroke-dasharray:1 .55;pointer-events:none}
+.dz-man-target{fill:var(--pad);stroke:var(--ink-3);stroke-width:.25;cursor:pointer}
+.dz-man-target.waiting{stroke:var(--pencil);stroke-width:.45}
+.dz-man-target.assigned{fill:var(--los);stroke:var(--ink)}
+.dz-target-label{fill:var(--ink-2);font-family:var(--cond);font-size:1.35px;
+  text-anchor:middle;pointer-events:none;font-weight:600}
 .dz-spot.on ~ .dz-label{fill:var(--pencil)}
 .dz-route{fill:none;stroke:var(--ink);stroke-width:.35;stroke-linejoin:round;stroke-linecap:round}
 .dz-route.on{stroke:var(--pencil);stroke-width:.5}
