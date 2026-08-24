@@ -743,3 +743,134 @@ table.scout s{color:var(--ink-3)}
   .season-slot{grid-template-columns:1fr}.season-slot .slot-actions{justify-content:flex-start}
   .board-controls{width:100%;justify-content:flex-end;margin-left:0}
 }
+
+/* ---------- phone layout ----------
+   Keep the information density of a coordinator's sheet, but give every
+   control a reliable touch target and let genuinely wide data scroll. */
+@media (max-width:600px){
+  body{font-size:14px}
+  #setup,#lobby{place-items:start center;padding:1rem .7rem 2rem}
+  .home-shell{gap:1rem}
+  .home-brand .eyebrow{margin-bottom:.5rem}
+  .home-brand .wordmark{margin-bottom:.75rem}
+  .home-brand .lede{font-size:.92rem;margin-bottom:.35rem}
+  .setup-card{padding:1.3rem 1rem 1.15rem}
+  .setup-card::before{left:.72rem}
+  .setup-card>*{padding-left:.45rem}
+  .setup-card h2{font-size:1.35rem;margin-bottom:1rem}
+  .form-field{margin-bottom:.85rem}
+  .join-row{align-items:stretch}
+  .join-row .btn{flex:none}
+  .setup-card .btn,.lobby-actions .btn,.matchup-actions .btn,
+  .season-actions .btn,.practice-choice .btn,.prospect-acts .btn{min-height:2.7rem}
+
+  #season .season-bar{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;
+    gap:.45rem;padding:.5rem .65rem .4rem}
+  #season .my-team{grid-column:1/-1;gap:.4rem;overflow:hidden}
+  #season .my-team .city{font-size:.62rem}
+  #season .my-team b{font-size:1.16rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #season .my-team .rec{font-size:1rem}
+  #season .wk{justify-self:start;text-align:left}
+  #season .wk b{font-size:.9rem}
+  #season .seat-badge{padding:.22rem .42rem;font-size:.59rem;align-self:center}
+  #season .season-bar .btn{min-height:2.2rem;padding:.35rem .48rem;white-space:nowrap}
+  .season-code-strip{justify-content:space-between;padding:0 .65rem .35rem}
+  .season-code-strip button{min-height:2rem}
+  .season-tabs{overflow-x:auto;overscroll-behavior-inline:contain;scrollbar-width:none;
+    padding:0 .65rem;-webkit-overflow-scrolling:touch}
+  .season-tabs::-webkit-scrollbar{display:none}
+  .season-tabs .tab{flex:0 0 auto;min-height:2.5rem;padding:.35rem .7rem;white-space:nowrap}
+  .season-pane{padding:1rem .65rem calc(3rem + env(safe-area-inset-bottom))}
+  .matchup{padding:.85rem}
+  .matchup-actions,.season-actions,.prospect-acts{display:grid;grid-template-columns:1fr;gap:.5rem}
+  .matchup-actions .btn,.season-actions .btn,.prospect-acts .btn{width:100%}
+  .season-actions .scout-note{grid-column:1}
+  .film-bank{align-items:flex-start;gap:.75rem;padding:.7rem .75rem}
+  .film-bank p{font-size:.95rem;line-height:1.3}
+  .scout-block{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .season-pane table.scout{width:max-content;min-width:100%}
+  table.scout th,table.scout td{padding:.35rem .45rem;white-space:nowrap}
+
+  .board-main{gap:.25rem;padding:.4rem .35rem .3rem}
+  .side{gap:.2rem}
+  .tname{font-size:.64rem;letter-spacing:.07em}
+  .team-id small{font-size:.52rem}
+  .tscore{font-size:1.75rem}
+  .poss{width:.55rem;height:.42rem}
+  .center{gap:.18rem}
+  .cell{min-width:2.4rem;padding:.2rem .22rem .16rem}
+  .cell.wide{min-width:3.7rem}
+  .cell b{font-size:1rem}
+  .cell span{font-size:.46rem;letter-spacing:.1em}
+  .board-situation{gap:.35rem;padding:0 .4rem .45rem}
+  .board-situation .dnd{font-size:1rem}
+  .board-situation .spot{font-size:.61rem}
+  .board-controls{gap:.45rem}
+  .board-controls .btn-tiny{min-height:2.15rem;padding:.35rem .5rem}
+  .to-use{margin-left:.2rem}
+  .to-label{display:none}
+  .field{padding:.35rem .25rem .3rem}
+  .field-note{font-size:.95rem;line-height:1.25}
+
+  .booth{gap:1.25rem;padding:1rem .65rem calc(3rem + env(safe-area-inset-bottom))}
+  .col-head{align-items:flex-start;flex-wrap:wrap;gap:.45rem}
+  .col-meta{width:100%;justify-content:space-between;flex-wrap:wrap}
+  .tempo-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}
+  .tempo-row>span{grid-column:1/-1}
+  .chip{min-height:2.5rem;padding:.4rem .45rem}
+  .sheet{grid-template-columns:1fr;gap:.7rem}
+  .call{min-height:2.9rem;padding:.5rem .6rem}
+  .feed li{gap:.35rem;padding:.42rem .1rem;align-items:flex-start}
+  .feed li .t{width:4.2rem}
+  .feed li .dd{width:4.4rem}
+  .feed li>span:last-child{min-width:0;overflow-wrap:anywhere}
+
+  #designer .season-bar{padding:.55rem .65rem}
+  #designer .my-team{gap:.35rem}
+  #designer .my-team b{font-size:1.15rem}
+  .dz-wrap{gap:1rem;padding:.85rem .55rem calc(2.5rem + env(safe-area-inset-bottom))}
+  .dz-modes{overflow-x:auto;scrollbar-width:none}
+  .dz-modes::-webkit-scrollbar{display:none}
+  .dz-modes .tab{flex:0 0 auto;min-height:2.5rem;white-space:nowrap}
+  .dz-controls,.dz-film-controls{gap:.45rem}
+  .dz-film-controls{min-width:0;padding:.5rem}
+  .dz-film-controls .btn{min-height:2.6rem}
+  .dz-overlay-note{align-items:flex-start;flex-direction:column}
+  .dz-overlay-note .btn{width:100%;min-height:2.5rem}
+  .dz-hint{font-size:1rem;line-height:1.25}
+  .dz-field{touch-action:manipulation}
+  .dz-actions{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+  .dz-actions .btn{min-height:2.7rem}
+  .dz-actions .btn-primary{grid-column:1/-1;margin-left:0}
+  .dz-read{overflow-x:auto}
+  .dz-read table.scout{width:max-content;min-width:100%}
+
+  .depth-row{padding:.5rem .4rem;gap:.3rem}
+  .depth-row .who b{font-size:.82rem}
+  .player-detail{padding:.7rem .6rem .9rem}
+  .practice-choice{padding:.65rem}
+  .scout-meter{padding:.7rem .75rem}
+  .meter-big b{font-size:2rem}
+
+  .veil{place-items:end center;padding:.65rem}
+  .modal{max-height:calc(100dvh - 1.3rem);overflow:auto;padding:1.1rem;
+    padding-bottom:calc(1.1rem + env(safe-area-inset-bottom))}
+  .modal-actions{display:grid;grid-template-columns:1fr}
+  .modal-actions .btn{width:100%;min-height:2.7rem}
+  .toasts{bottom:calc(.7rem + env(safe-area-inset-bottom));width:calc(100% - 1.2rem)}
+}
+
+@media (max-width:380px){
+  #season .season-bar{grid-template-columns:minmax(0,1fr) auto auto}
+  #season .seat-badge{grid-column:1;grid-row:3;justify-self:start}
+  #season .wk{grid-column:1;grid-row:2}
+  #season #btn-home{grid-column:2;grid-row:2}
+  #season #btn-designer{grid-column:3;grid-row:2}
+  .board-main{gap:.15rem;padding-inline:.25rem}
+  .cell{min-width:2.15rem}
+  .cell.wide{min-width:3.35rem}
+  .tname{font-size:.58rem}
+  .tscore{font-size:1.55rem}
+  .timeouts{gap:.2rem}
+  .timeouts i{width:.48rem;height:.48rem}
+}

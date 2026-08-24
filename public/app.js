@@ -1750,7 +1750,8 @@ function paneWeek(pane, S) {
         const other = app.seat === 'OC' ? 'DC' : 'OC';
         const rival = app.seasonDoc?.seats?.[other];
         const theirs = app.seasonDoc?.vote?.[other] || null;
-        const line = !rival ? 'Waiting for your rival to take the other seat.'
+        const line = !rival
+          ? `Your ${other === 'OC' ? 'offensive' : 'defensive'} coordinator will be handled by the staff.`
           : mine && !theirs ? `Waiting on ${rival.displayName}.`
           : theirs === 'call' ? `${rival.displayName} wants to call it — so it gets called.`
           : theirs === 'sim' ? `${rival.displayName} would rather sim. Simming needs you both.`
@@ -2621,12 +2622,21 @@ async function settleAutomaticCall() {
 }
 
 function renderLobby(g) {
+  const soloSeason = !!app.inSeason && !!g.autoSeat;
+  $('lobby-eyebrow').textContent = soloSeason ? 'Season game' : 'Game code';
+  $('lobby-lede').textContent = soloSeason
+    ? 'Your other coordinator is handled by the staff. Ready up to begin.'
+    : 'Send this to your rival. The clock starts when you both ready up.';
   $('lobby-code').textContent = g.id;
+  $('lobby-code').hidden = soloSeason;
   for (const seat of ['OC', 'DC']) {
     const row = $('row-' + seat);
     const p = g.seats?.[seat];
-    row.querySelector('span').textContent = p ? `${p.displayName}${p.ready ? ' — ready' : ''}` : 'Open seat';
-    row.classList.toggle('is-ready', !!p?.ready);
+    const isStaff = soloSeason && seat === g.autoSeat;
+    row.querySelector('span').textContent = p
+      ? `${p.displayName}${p.ready ? ' — ready' : ''}`
+      : isStaff ? 'Staff coordinator — ready' : 'Open seat';
+    row.classList.toggle('is-ready', !!p?.ready || isStaff);
   }
   const mine = app.inSeason ? app.seat : app.t?.mySeat;
   const ready = !!g.seats?.[mine]?.ready;

@@ -140,11 +140,15 @@ export const finishedGameRecorded = (season, gameDocId) => !!gameDocId
   && season.results.some((r) => r.final && r.gameDocId === gameDocId);
 export const weekGames = (season, week) => season.schedule.games.filter((g) => g.week === week);
 
-/** A season lobby opens automatically only for a coordinator who chose to
- * call. Their partner can keep working on the season page and join manually. */
+/** A season lobby opens automatically for the coordinator who chose to call.
+ * Their partner can keep working on the season page and join manually. A
+ * one-seat career has no partner to wait for, so its only coordinator always
+ * follows the active game into the lobby. */
 export function shouldEnterSeasonLobby(doc, seat, optedOutGameId = null) {
+  const other = seat === 'OC' ? 'DC' : 'OC';
+  const solo = !!doc?.seats?.[seat] && !doc?.seats?.[other];
   return !!doc?.currentGameId && doc.currentGameId !== optedOutGameId
-    && doc.vote?.[seat] === 'call';
+    && (doc.vote?.[seat] === 'call' || solo);
 }
 
 /** The user's game this week, or null on a bye. */

@@ -59,6 +59,16 @@ assert.equal(shouldEnterSeasonLobby(oneCallerLobby, 'DC'), false,
 assert.equal(shouldEnterSeasonLobby(oneCallerLobby, 'OC', 'GAME'), false,
   'a coordinator who backs out should stay on the season screen');
 
+const soloLobby = {
+  currentGameId: 'SOLO',
+  seats: { OC: { uid: 'solo-coach' } },
+  vote: { OC: null, DC: null },
+};
+assert.equal(shouldEnterSeasonLobby(soloLobby, 'OC'), true,
+  'a solo coordinator should enter an active game even if an old vote is missing');
+assert.equal(shouldEnterSeasonLobby(soloLobby, 'OC', 'SOLO'), false,
+  'a solo coordinator can still back out of the lobby');
+
 function gameAtCpuGoalLine() {
   return {
     state: {
