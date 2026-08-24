@@ -541,9 +541,9 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
 .dz-label{fill:var(--ink);font-family:var(--cond);font-size:1.5px;text-anchor:middle;
   pointer-events:none;font-weight:600}
 .dz-man-link{stroke:var(--los);stroke-width:.34;stroke-dasharray:1 .55;pointer-events:none}
-.dz-man-target{fill:var(--pad);stroke:var(--ink-3);stroke-width:.25;cursor:pointer}
-.dz-man-target.waiting{stroke:var(--pencil);stroke-width:.45}
-.dz-man-target.assigned{fill:var(--los);stroke:var(--ink)}
+.dz-offense-spot{fill:var(--pad);stroke:var(--ink-3);stroke-width:.3;pointer-events:none}
+.dz-offense-spot.assignable{stroke:var(--pencil);stroke-width:.55;cursor:pointer;pointer-events:auto}
+.dz-offense-spot.assigned{fill:var(--los);stroke:var(--ink)}
 .dz-target-label{fill:var(--ink-2);font-family:var(--cond);font-size:1.35px;
   text-anchor:middle;pointer-events:none;font-weight:600}
 .dz-spot.on ~ .dz-label{fill:var(--pencil)}
@@ -556,7 +556,9 @@ table.scout mark{background:var(--pencil-soft);color:var(--ink);font-weight:700;
 .dz-film-arrow{fill:#D47820;opacity:.9}
 .dz-film-zone{fill:rgba(212,120,32,.12);stroke:#D47820;stroke-width:.3;
   stroke-dasharray:.8 .45;pointer-events:none}
-.dz-film-spot{fill:#FFF4DF;stroke:#D47820;stroke-width:.3}
+.dz-film-spot{fill:#FFF4DF;stroke:#D47820;stroke-width:.3;pointer-events:none}
+.dz-film-spot.assignable{stroke:var(--pencil);stroke-width:.6;cursor:pointer;pointer-events:auto}
+.dz-film-spot.assigned{fill:var(--los)}
 .dz-film-label{fill:#9A5415;font-family:var(--cond);font-size:1.25px;text-anchor:middle;
   text-transform:uppercase}
 .dz-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.7rem}

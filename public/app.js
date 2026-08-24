@@ -723,7 +723,7 @@ function appendFilmOverlaySvg(parts) {
     }
     parts.push(`<polygon points="${points}" class="dz-film-arrow"/>`);
     const start = svgPts[0];
-    parts.push(`<circle cx="${start[0]}" cy="${start[1]}" r="1.15" class="dz-film-spot"/>`);
+    parts.push(`<circle cx="${start[0]}" cy="${start[1]}" r="1.15" class="dz-film-spot" data-film-spot="${spot}"/>`);
     parts.push(`<text x="${start[0]}" y="${start[1] - 2.1}" class="dz-film-label">${spot}</text>`);
   }
 }
@@ -842,6 +842,8 @@ function drawDefense() {
   }
   p.push(`<line x1="2" y1="${fy(10)}" x2="${DZ_W - 2}" y2="${fy(10)}" class="dz-deep"/>`);
   appendFilmOverlaySvg(p);
+  const filmSpots = new Set(DZ.overlay?.unit === 'offense'
+    ? Object.keys(overlayDiagram()?.paths || {}) : []);
   const read = readDefense(defDesign());
   const rushing = new Set(read.rushers);
   for (const [defender, receiver] of Object.entries(DZ.manAssignments)) {
@@ -874,9 +876,10 @@ function drawDefense() {
     p.push(`<text x="${fx(q[0])}" y="${fy(q[1]) + 3.6}" class="dz-label">${spot}</text>`);
   }
   for (const [spot, q] of Object.entries(eligible)) {
-    const assigned = Object.values(DZ.manAssignments).includes(spot);
-    const waiting = !!DZ.manPending;
-    p.push(`<rect x="${fx(q[0]) - 1.4}" y="${fy(q[1]) - 1.4}" width="2.8" height="2.8" rx=".35" class="dz-man-target${assigned ? ' assigned' : ''}${waiting ? ' waiting' : ''}" data-target="${spot}"/>`);
+    // An opponent-film dot already marks this eligible. Reuse it as the hit
+    // target instead of stacking another shape on top of it.
+    if (filmSpots.has(spot)) continue;
+    p.push(`<circle cx="${fx(q[0])}" cy="${fy(q[1])}" r="1.5" class="dz-offense-spot" data-target="${spot}"/>`);
     p.push(`<text x="${fx(q[0])}" y="${fy(q[1]) - 2.2}" class="dz-target-label">${spot}</text>`);
   }
   p.push('</svg>');
@@ -898,19 +901,23 @@ function drawDefense() {
     }
     drawDesigner();
   }));
-  svg.querySelectorAll('.dz-man-target').forEach((target) => target.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!DZ.manPending) {
-      $('dz-hint').textContent = 'Click a selected defender again before choosing his matchup.';
-      return;
-    }
-    const defender = DZ.manPending;
-    DZ.manAssignments = setManAssignment(DZ.manAssignments, defender, target.dataset.target);
-    delete DZ.paths[defender];
-    DZ.sel = defender;
-    DZ.manPending = null;
-    drawDesigner();
-  }));
+  svg.querySelectorAll('.dz-offense-spot, .dz-film-spot[data-film-spot]').forEach((target) => {
+    const receiver = target.dataset.target || target.dataset.filmSpot;
+    if (!(receiver in eligible)) return;
+    const assigned = Object.values(DZ.manAssignments).includes(receiver);
+    target.classList.toggle('assigned', assigned);
+    target.classList.toggle('assignable', !!DZ.manPending);
+    if (!DZ.manPending) return;
+    target.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const defender = DZ.manPending;
+      DZ.manAssignments = setManAssignment(DZ.manAssignments, defender, receiver);
+      delete DZ.paths[defender];
+      DZ.sel = defender;
+      DZ.manPending = null;
+      drawDesigner();
+    });
+  });
   svg.addEventListener('click', (e) => {
     if (!DZ.sel) { $('dz-hint').textContent = 'Pick a defender first, then draw where he goes.'; return; }
     if (DZ.manPending) {
