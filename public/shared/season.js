@@ -20,6 +20,7 @@ import {
   filmFromPlays, hasCall, mergeFilmBooks, simulatedGameFilm, teamOffensiveIdentity,
 } from './film.js';
 import { practicedRoster, practicedStrength, practiceEffects } from './practice.js';
+import { applyGamePerformanceDevelopment } from './progression.js';
 
 export const REGULAR_WEEKS = 18;
 const ROUND_NAMES = { 19: 'Wild Card', 20: 'Divisional', 21: 'Conference Championship', 22: 'The Final' };
@@ -340,13 +341,24 @@ export function simRemainingWeek(season, week = season.week) {
     }
     return r;
   });
-  return {
+  let next = {
     ...season,
     results: dedupeResults([...season.results, ...fresh]),
     filmBook,
     lastGameFilm,
     filmBank,
   };
+  // Staff-called games still produce a real player box score. Apply the same
+  // performance model as a live game so simming never freezes development.
+  for (const result of fresh) {
+    if (result.home !== us && result.away !== us) continue;
+    const developed = applyGamePerformanceDevelopment(next, result);
+    next = {
+      ...developed.season,
+      results: developed.season.results.map((r) => r.id === result.id ? developed.result : r),
+    };
+  }
+  return next;
 }
 
 /** Close the week out and move the calendar forward. */

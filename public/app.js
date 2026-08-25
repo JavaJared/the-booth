@@ -1760,6 +1760,19 @@ function paneWeek(pane, S) {
       }
     }
     pane.append(box);
+
+    const gameDevelopment = S.lastGameDevelopment;
+    if (done && gameDevelopment?.week === S.week && gameDevelopment.awards?.length) {
+      const rows = gameDevelopment.awards.slice(0, 6).map((award) => [
+        `${escapeHtml(award.name)} <em>${escapeHtml(award.pos)}</em>`,
+        award.traits.slice(0, 3).map((trait) => TRAITS[trait] || trait).join(', '),
+        `+${award.xp.toFixed(2)} XP${award.improved?.length
+          ? ` · ${award.improved.map((trait) => `${TRAITS[trait] || trait} improved`).join(', ')}` : ''}`,
+      ]);
+      pane.append(card('Game development',
+        table(['Player', 'Skills developed', 'Progress'], rows)
+        + noteEl('Production determines where XP goes. Age, development speed, and current rating determine how quickly it becomes a permanent rating point.')));
+    }
   }
 
   // The rest of the league.
@@ -2328,11 +2341,16 @@ function playerDevelopmentDetail(S, side, player) {
       : `${c.from} → ${c.to} (${c.reason || c.source})`,
   ]);
   const fits = playerCustomFits(S, side, player);
+  const gameRows = [...(player.performanceHistory || [])].reverse().slice(0, 6).map((game) => [
+    `${game.year}, W${game.week}`,
+    game.awards.map((award) => `${TRAITS[award.trait] || award.trait} +${award.xp.toFixed(2)}`).join(', '),
+    game.awards.map((award) => award.reason).filter(Boolean).slice(0, 2).join(' · '),
+  ]);
   detail.innerHTML = `
     <div class="player-detail-grid">
       <section><h5>Development trajectory</h5>
         <p><b>${developmentTrajectory(player)}</b> · ${DEVELOPMENT_LABEL[player.development] || 'Normal'} learner</p>
-        <p class="scout-note">Playing time banks role-specific experience. Trained traits also resist age decline.</p>
+        <p class="scout-note">Playing time and production bank role-specific experience. Trained traits also resist age decline.</p>
       </section>
       <section><h5>Best custom-play fits</h5>${fits.length
         ? table(['Play', 'Role', 'Fit'], fits.map((f) => [
@@ -2342,9 +2360,12 @@ function playerDevelopmentDetail(S, side, player) {
     <h5>Attribute development</h5>${traitRows.length
       ? table(['Attribute', 'Rating', 'Toward next point'], traitRows)
       : note('This legacy player does not have a position trait profile.')}
+    <h5>Recent game development</h5>${gameRows.length
+      ? table(['Game', 'XP earned', 'Why'], gameRows)
+      : note('No game-performance development recorded yet.')}
     <h5>Recent changes</h5>${changeRows.length
       ? table(['When', 'Attribute', 'Change'], changeRows)
-      : note('No recorded changes yet. New history begins with practice gains and the next offseason.')}`;
+      : note('No recorded changes yet. New history begins when practice, game XP, or offseason growth raises a trait.')}`;
   return detail;
 }
 

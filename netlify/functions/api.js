@@ -21,6 +21,7 @@ import { TEAM_BY_ID } from '../../public/shared/league.js';
 import { OFF_BY_ID, DEF_BY_ID, registerSeasonCalls,
   seasonCallIds } from '../../public/shared/playbook.js';
 import { addPracticePeriod } from '../../public/shared/practice.js';
+import { applyGamePerformanceDevelopment } from '../../public/shared/progression.js';
 import { inviteCode, normalizeInviteCode } from '../../public/shared/codes.js';
 
 class ApiError extends Error {
@@ -403,8 +404,10 @@ const actions = {
     result.playoff = doc.phase === 'playoffs';
     result.gameDocId = doc.currentGameId;
 
+    const developed = applyGamePerformanceDevelopment(season, result);
     const withResult = recordGameFilm(
-      { ...season, results: [...season.results, result] }, plays, cfg, game.filmPoints);
+      { ...developed.season, results: [...season.results, developed.result] },
+      plays, cfg, game.filmPoints);
     const closed = simRemainingWeek(withResult);
     await seasonRef(seasonId).update({
       ...dehydrate(closed),

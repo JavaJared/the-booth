@@ -40,6 +40,7 @@ import {
   practiceRemaining, practicedRoster, practicedStrength,
 } from '../public/shared/practice.js';
 import { talentFeedback } from '../public/shared/feedback.js';
+import { applyGamePerformanceDevelopment } from '../public/shared/progression.js';
 
 const fixedInvite = inviteCode(Uint8Array.from([0, 1, 31, 32]));
 assert.equal(fixedInvite, `AB${INVITE_ALPHABET[31]}A`,
@@ -208,6 +209,52 @@ assert.ok(starterExperience.trainingXp.route > idleExperience.trainingXp.route,
   'real playing time should bank more role-specific experience than a season without appearances');
 assert.ok(starterExperience.trainingXp.route > starterExperience.trainingXp.speed,
   'playing experience should emphasize assignment skills instead of raising every trait evenly');
+
+// Game production should bank targeted XP immediately, use the same age/dev
+// curve as practice, and never pay out twice if a finish request is retried.
+const performanceSeason = structuredClone(statSeason);
+const performanceQb = performanceSeason.rosters[performanceSeason.userTeam].offense
+  .find((p) => p.pos === 'QB');
+performanceQb.age = 22;
+performanceQb.development = 'quick';
+performanceQb.traits.acc = 72;
+performanceQb.trainingXp = { acc: traitXpCost(72) - 1 };
+const performanceResult = {
+  id: 'performance-game', week: 1, final: true, played: true,
+  home: performanceSeason.userTeam, away: TEAMS[1].id,
+  homeStats: { plays: 64, rushYards: 118, passYards: 322 },
+  awayStats: { plays: 61, rushYards: 91, passYards: 205 },
+  players: {
+    offense: [{ name: performanceQb.name, spot: performanceQb.spot, pos: 'QB',
+      att: 32, comp: 25, passYards: 322, passTD: 3, int: 0, sacked: 1 }],
+    defense: [],
+  },
+};
+const performanceApplied = applyGamePerformanceDevelopment(performanceSeason, performanceResult);
+const developedQb = performanceApplied.season.rosters[performanceSeason.userTeam].offense
+  .find((p) => p.name === performanceQb.name);
+assert.ok(developedQb.traits.acc > 72,
+  'an efficient passing performance should convert banked accuracy XP into a permanent gain');
+assert.ok(developedQb.trainingXp.field > 0 && developedQb.trainingXp.poise > 0,
+  'game production should develop the specific quarterback skills demonstrated');
+assert.ok(developedQb.developmentHistory.some((c) => c.source === 'game' && c.trait === 'acc'),
+  'a rating earned from game performance should retain an explainable change record');
+assert.ok(developedQb.performanceHistory.at(-1).awards.some((a) => /completions/.test(a.reason)),
+  'the roster should retain why each game-performance award was earned');
+const appliedTwice = applyGamePerformanceDevelopment(performanceApplied.season,
+  performanceApplied.result);
+assert.equal(appliedTwice.season.rosters[performanceSeason.userTeam].offense
+  .find((p) => p.name === performanceQb.name).trainingXp.field, developedQb.trainingXp.field,
+'a retried game finish must not award performance XP twice');
+const simulatedDevelopment = simRemainingWeek(createSeason({
+  seed: 'sim-performance-development', userTeam: TEAMS[0].id,
+}));
+const simulatedUserResult = simulatedDevelopment.results.find((r) =>
+  r.home === simulatedDevelopment.userTeam || r.away === simulatedDevelopment.userTeam);
+assert.equal(simulatedUserResult.performanceDevelopmentApplied, true,
+  'a staff-simulated user game should also apply performance development');
+assert.ok(simulatedDevelopment.lastGameDevelopment?.awards?.length,
+  'a simulated game should leave a visible weekly development summary');
 
 const veteran = { spot: 'S1', pos: 'S', name: 'Maintenance Fixture', rating: 75, age: 34,
   traits: { range: 75, instinct: 75, tackle: 75, cover: 75, speed: 75 },
