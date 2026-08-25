@@ -746,7 +746,10 @@ const actions = {
       }
 
       const simulationStarted = performance.now();
-      const sim = runToNextDecision(gameId, g, { callId, special, conversion, timeout });
+      // Preserve `auto` all the way into the engine. Dropping it here made a
+      // solo season's staff turn look like a human submission, so the resolver
+      // tried to execute an undefined call id and left the game stuck.
+      const sim = runToNextDecision(gameId, g, { callId, special, auto, conversion, timeout });
       timings.simulation = (timings.simulation || 0) + performance.now() - simulationStarted;
       const status = sim.state.status === 'final' ? 'final' : 'live';
       const deadline = status === 'final' ? null : Date.now() + PLAY_CLOCK_MS;

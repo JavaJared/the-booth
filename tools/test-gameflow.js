@@ -128,6 +128,24 @@ assert.equal(offensiveLook.personnel, OFF_BY_ID[offensiveLookSnap.offId].pers,
 assert.match(offensiveLook.formation, /Gun|Pistol|Singleback|Formation|Goal Line|Spread|Jumbo/,
   'the defensive coordinator should receive a readable offensive formation');
 
+// A solo career submits no call id for its staff-controlled unit. The `auto`
+// flag must make the engine choose that unit's call rather than resolving an
+// undefined human call. Cover both possible solo seats and possessions.
+for (const [autoSeat, possession] of [['OC', 'US'], ['DC', 'CPU']]) {
+  const soloAutoGame = {
+    state: newGameState({ firstPossession: possession }),
+    tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
+    filmPoints: { OC: 0, DC: 0 }, pending: {}, autoSeat,
+    gameplan: { OC: { tempo: 'normal' }, DC: {} },
+  };
+  const automatic = runToNextDecision(`solo-auto-${autoSeat}`, soloAutoGame, { auto: true });
+  assert.ok(automatic.plays.length > 0,
+    `the staff-controlled ${autoSeat} should advance at least one snap`);
+  assert.ok(automatic.plays.filter((p) => !p.special && !p.conversion)
+    .every((p) => p.offId && p.defId),
+  `the staff-controlled ${autoSeat} must resolve defined offensive and defensive calls`);
+}
+
 // A Netlify cold start begins with only the built-in playbook. Re-registering
 // the calls stored on the season must make its random custom id resolvable.
 const customId = 'cp-cold-start-regression';
