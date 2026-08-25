@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {
   computeEdge, resolveSnap, newGameState, emptyTendencies, mulberry32, hashSeed,
 } from '../public/shared/engine.js';
-import { runToNextDecision } from '../public/shared/gameflow.js';
+import { opponentPreSnapLook, runToNextDecision } from '../public/shared/gameflow.js';
 import {
   OFFENSE, DEFENSE, OFF_BY_ID, DEF_BY_ID, registerCustomPlays, registerCustomDefenses,
   registerSeasonCalls, seasonCallIds,
@@ -103,6 +103,30 @@ assert.equal(touchdownResult.state.pendingConversion, null,
   'CPU conversion must not be returned as a human decision');
 assert.ok(touchdownResult.plays.some((play) => ['kick', 'two'].includes(play.conversion)),
   'CPU should choose and resolve its own conversion');
+
+const defensiveLookGame = {
+  state: newGameState({ firstPossession: 'US' }),
+  tendencies: { US: emptyTendencies(), CPU: emptyTendencies() },
+  filmPoints: { OC: 0, DC: 0 }, pending: {}, autoSeat: null,
+  gameplan: { OC: { tempo: 'normal' }, DC: {} },
+};
+const defensiveLook = opponentPreSnapLook('presnap-defense', defensiveLookGame);
+const defensiveLookSnap = runToNextDecision('presnap-defense', defensiveLookGame,
+  { callId: 'slants' }).plays[0];
+assert.equal(defensiveLook.personnel, DEF_BY_ID[defensiveLookSnap.defId].pers,
+  'the displayed defensive package should match the call resolved on that snap');
+assert.equal('callId' in defensiveLook || 'coverage' in defensiveLook, false,
+  'the free pre-snap look must not expose the opponent play or exact coverage');
+
+const offensiveLookGame = gameAtCpuGoalLine();
+offensiveLookGame.autoSeat = null;
+const offensiveLook = opponentPreSnapLook('presnap-offense', offensiveLookGame);
+const offensiveLookSnap = runToNextDecision('presnap-offense', offensiveLookGame,
+  { callId: 'base3' }).plays[0];
+assert.equal(offensiveLook.personnel, OFF_BY_ID[offensiveLookSnap.offId].pers,
+  'the displayed offensive personnel should match the call resolved on that snap');
+assert.match(offensiveLook.formation, /Gun|Pistol|Singleback|Formation|Goal Line|Spread|Jumbo/,
+  'the defensive coordinator should receive a readable offensive formation');
 
 // A Netlify cold start begins with only the built-in playbook. Re-registering
 // the calls stored on the season must make its random custom id resolvable.

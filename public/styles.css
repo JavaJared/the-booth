@@ -255,6 +255,20 @@ input:focus{outline:none;border-bottom-color:var(--pencil);border-bottom-width:2
 .film b{color:var(--ink);font-weight:700}
 .hint{font-family:var(--hand);font-size:1.2rem;color:var(--pencil);
   border-left:2px solid var(--pencil);padding:.2rem .7rem;margin:0 0 .85rem}
+.presnap-look{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  background:var(--pad);border:1px solid var(--ink);border-left:3px solid var(--los);
+  border-radius:2px;padding:.6rem .75rem;margin:0 0 .75rem}
+.presnap-main{display:grid;grid-template-columns:auto auto;align-items:baseline;gap:.05rem .55rem}
+.presnap-main>span{grid-column:1/-1;font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.12em;font-size:.6rem;font-weight:600;color:var(--ink-3)}
+.presnap-main b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.035em;
+  font-size:1.05rem;line-height:1.15}
+.presnap-main em{font-style:normal;font-family:var(--mono);font-size:.64rem;color:var(--ink-3);
+  white-space:nowrap}
+.presnap-tags{display:flex;justify-content:flex-end;gap:.35rem;flex-wrap:wrap}
+.presnap-tags span{border:1px solid var(--hair);background:var(--paper);border-radius:2px;
+  padding:.16rem .4rem;font-family:var(--cond);text-transform:uppercase;letter-spacing:.07em;
+  font-size:.62rem;color:var(--ink-2);white-space:nowrap}
 
 .tempo-row{display:flex;align-items:center;gap:.35rem;margin-bottom:.85rem;flex-wrap:wrap}
 .tempo-row>span{font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;
@@ -815,6 +829,11 @@ table.scout s{color:var(--ink-3)}
   .booth{gap:1.25rem;padding:1rem .65rem calc(3rem + env(safe-area-inset-bottom))}
   .col-head{align-items:flex-start;flex-wrap:wrap;gap:.45rem}
   .col-meta{width:100%;justify-content:space-between;flex-wrap:wrap}
+  .presnap-look{align-items:flex-start;flex-direction:column;gap:.45rem}
+  .presnap-main{grid-template-columns:1fr}
+  .presnap-main>span{grid-column:1}
+  .presnap-main em{white-space:normal}
+  .presnap-tags{justify-content:flex-start}
   .tempo-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}
   .tempo-row>span{grid-column:1/-1}
   .chip{min-height:2.5rem;padding:.4rem .45rem}

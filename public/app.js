@@ -22,7 +22,8 @@ import { FORMATIONS, FIELD_W, derivePlay, validate, describeRoute,
   setManAssignment } from './shared/designer.js';
 import { registerCustomPlays, registerCustomDefenses } from './shared/playbook.js';
 import { TEAMS, TEAM_BY_ID, DIVISIONS, fullName, sortedStandings } from './shared/league.js';
-import { runToNextDecision, seatOnClock, keyRead, PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
+import { runToNextDecision, seatOnClock, keyRead, opponentPreSnapLook,
+  PLAY_CLOCK_MS, FILM_COST } from './shared/gameflow.js';
 import {
   FILM_GAME_GRANT, FILM_OVERLAY_COST, FILM_SITUATIONS, filmRows,
   opponentDiagram, opponentDefenseDiagram,
@@ -2607,6 +2608,18 @@ function render(g, plays) {
   $('film').innerHTML = `Film <b>${g.filmPoints?.[mine] || 0}</b>`;
   $('btn-keys').hidden = !isMyCall;
   $('btn-keys').disabled = (g.filmPoints?.[mine] || 0) < FILM_COST;
+
+  const lookBox = $('presnap-look');
+  const look = isMyCall && !s.pendingConversion
+    ? opponentPreSnapLook(g.id || app.t?.gameId, g) : null;
+  lookBox.hidden = !look;
+  if (look) {
+    lookBox.innerHTML = `<div class="presnap-main">
+      <span>Opponent pre-snap</span><b>${escapeHtml(look.formation)}</b>
+      <em>${escapeHtml(look.unit === 'defense' ? `${look.personnel} package` : `${look.personnel} personnel`)}</em>
+    </div><div class="presnap-tags">${look.details.map((detail) =>
+      `<span>${escapeHtml(detail)}</span>`).join('')}</div>`;
+  }
 
   const hint = g.pending?.hint;
   $('hint').hidden = !(hint && hint.seat === mine && hint.playIndex === s.playIndex);

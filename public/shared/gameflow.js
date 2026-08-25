@@ -32,6 +32,67 @@ export const timeoutSide = (seat) => (seat === 'OC' ? 'US' : 'US');
 export const cpuRng = (gameId, i) => mulberry32(hashSeed(`${gameId}:cpu:${i}`));
 export const playRng = (gameId, i) => mulberry32(hashSeed(`${gameId}:play:${i}`));
 
+const DEFENSIVE_LOOKS = {
+  base: ['Base 4-3 Over', 'Base 4-3 Under'],
+  nickel: ['Nickel 4-2-5', 'Nickel 3-3-5'],
+  dime: ['Dime 3-2-6', 'Dime 4-1-6'],
+  heavy: ['Goal-line 5-4', 'Goal-line 6-3'],
+};
+const OFFENSIVE_LOOKS = {
+  '10': ['Gun Empty 3x2', 'Gun Spread 2x2'],
+  '11': ['Gun Trips', 'Gun Doubles', 'Pistol Trips'],
+  '12': ['Singleback Ace', 'Pistol Wing', 'Gun Tight Doubles'],
+  '21': ['I Formation', 'Offset I', 'Pistol Strong'],
+  heavy: ['Jumbo Goal Line', 'Heavy I Formation'],
+};
+const OFFENSIVE_PERSONNEL = {
+  '10': '1 RB · 0 TE · 4 WR',
+  '11': '1 RB · 1 TE · 3 WR',
+  '12': '1 RB · 2 TE · 2 WR',
+  '21': '2 RB · 1 TE · 2 WR',
+  heavy: 'Jumbo personnel',
+};
+
+const pickLook = (items, gameId, playIndex, key) => {
+  const rng = mulberry32(hashSeed(`${gameId}:formation:${playIndex}:${key}`));
+  return items[Math.floor(rng() * items.length)] || items[0];
+};
+
+/** The alignment a coordinator can see before calling. This intentionally
+ * returns no play id, family or coverage: personnel and shell create a useful
+ * football read without turning the formation card into an answer key. It is
+ * derived locally from the same deterministic CPU selection as the resolver,
+ * so rendering it adds no request and cannot drift from the eventual snap. */
+export function opponentPreSnapLook(gameId, game) {
+  const { state } = game;
+  if (!state || state.pendingConversion || state.status === 'final') return null;
+  const rng = cpuRng(gameId, state.playIndex);
+  if (state.possession === 'US') {
+    const def = DEF_BY_ID[cpuDefensiveCall(state, game.tendencies.US, rng)];
+    if (!def) return null;
+    const shell = def.cov === 'man0' ? 'Zero-high shell'
+      : def.cov === 'man1' || def.cov === 'cover3' ? 'Single-high shell' : 'Two-high shell';
+    return {
+      unit: 'defense',
+      formation: pickLook(DEFENSIVE_LOOKS[def.pers] || DEFENSIVE_LOOKS.nickel,
+        gameId, state.playIndex, def.pers),
+      personnel: def.pers,
+      details: [`${def.box} defenders in the box`, shell],
+    };
+  }
+  const identity = game.cpuIdentity || teamOffensiveIdentity(game.seasonSeed || gameId,
+    game.them || game.oppName || 'CPU');
+  const off = OFF_BY_ID[cpuOffensiveCall(state, game.tendencies.CPU, rng, identity)];
+  if (!off) return null;
+  return {
+    unit: 'offense',
+    formation: pickLook(OFFENSIVE_LOOKS[off.pers] || OFFENSIVE_LOOKS['11'],
+      gameId, state.playIndex, off.pers),
+    personnel: off.pers,
+    details: [`${off.pers} personnel`, OFFENSIVE_PERSONNEL[off.pers] || 'Balanced personnel'],
+  };
+}
+
 /** The truthful, partial tell that film points buy. */
 export function keyRead(gameId, game) {
   const { state } = game;
